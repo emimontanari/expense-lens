@@ -1,6 +1,7 @@
 from datetime import date
 
 import pytest
+
 from expense_lens.normalize import (
     cuit_is_valid,
     normalize_amount,
