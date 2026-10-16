@@ -14,8 +14,23 @@ from expense_lens.main import app
 EXAMPLES = Path(__file__).parents[1] / "examples" / "synthetic"
 RESULT = {
     "issuer": "Comercio ficticio",
+    "issuer_cuit": "30-00000000-7",
+    "date": "15/10/2026",
+    "number": "0001-00000001",
+    "document_type": "factura",
+    "letter": "A",
+    "currency": "$",
+    "subtotal": "100,00",
+    "tax": "21,00",
+    "total": "121,00",
+}
+NORMALIZED = {
+    "issuer": "Comercio ficticio",
+    "issuer_cuit": "30000000007",
     "date": "2026-10-15",
     "number": "0001-00000001",
+    "document_type": "factura",
+    "letter": "A",
     "currency": "ARS",
     "subtotal": "100.00",
     "tax": "21.00",
@@ -79,8 +94,14 @@ def test_extracts_image_via_mocked_sdk_and_validates(requests, filename, mime):
             headers=CONSENT,
         )
     assert response.status_code == 200
-    assert response.json()["receipt"] == RESULT
-    assert response.json()["issues"] == []
+    assert response.json()["receipt"] == NORMALIZED
+    assert response.json()["issues"] == [
+        {
+            "code": "currency_inferred_from_symbol",
+            "field": "currency",
+            "severity": "info",
+        }
+    ]
     assert response.json()["requires_human_review"] is True
     assert len(sent) == 1
     body = json.loads(sent[0].content)

@@ -29,7 +29,14 @@ def test_capture_is_bounded_and_refuses_replay(tmp_path, monkeypatch, status):
                         "finish_reason": "stop",
                         "message": {
                             "role": "assistant",
-                            "content": json.dumps(script["EXPECTED"]),
+                            "content": json.dumps(
+                                {
+                                    **script["EXPECTED"],
+                                    "issuer_cuit": None,
+                                    "document_type": None,
+                                    "letter": None,
+                                }
+                            ),
                         },
                     }
                 ],

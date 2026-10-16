@@ -11,7 +11,8 @@ from expense_lens.documents import (
     inspect_document,
 )
 from expense_lens.extraction import ExtractionError, extract_document_receipt
-from expense_lens.receipts import Receipt, ReceiptValidation, validate_receipt
+from expense_lens.receipts import ReceiptValidation, ValidationRequest
+from expense_lens.rules import review_receipt
 
 app = FastAPI(
     title="ExpenseLens",
@@ -32,9 +33,9 @@ def health() -> HealthResponse:
 
 
 @app.post("/receipts/validate", response_model=ReceiptValidation, tags=["receipts"])
-def check_receipt(receipt: Receipt) -> ReceiptValidation:
-    """Valida datos normalizados sin guardarlos ni aprobarlos."""
-    return validate_receipt(receipt)
+def check_receipt(body: ValidationRequest) -> ReceiptValidation:
+    """Normaliza y valida correcciones humanas sin guardarlas ni aprobarlas."""
+    return review_receipt(body.receipt, body.fiscal_qr)
 
 
 async def read_document_bytes(request: Request) -> bytes:

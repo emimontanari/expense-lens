@@ -73,7 +73,7 @@ describe('ExpenseLens', () => {
     expect(await screen.findByText(/cambios pendientes de validar/i)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: /validar correcciones/i }));
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
-    expect(JSON.parse(fetch.mock.calls[1][1].body)).toMatchObject({ issuer: 'Cafe Uno', date: null, subtotal: null });
+    expect(JSON.parse(fetch.mock.calls[1][1].body)).toMatchObject({ receipt: { issuer: 'Cafe Uno', date: null, subtotal: null } });
     expect(await screen.findByText(/revisión humana requerida/i)).toBeTruthy();
   });
 });

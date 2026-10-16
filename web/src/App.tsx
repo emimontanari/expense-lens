@@ -112,7 +112,7 @@ export default function App() {
       const validated = await request('/receipts/validate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(result.receipt),
+        body: JSON.stringify({ receipt: result.receipt }),
       });
       setResult(validated);
       setDirty(false);

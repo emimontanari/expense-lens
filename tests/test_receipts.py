@@ -12,101 +12,149 @@ def client():
 
 @pytest.fixture
 def receipt():
+    """Factura A ficticia con IVA discriminado y CUIT de ejemplo oficial."""
     return {
         "issuer": "Comercio ficticio",
-        "date": "2026-10-15",
+        "issuer_cuit": "30-00000000-7",
+        "date": "15/10/2026",
         "number": "0001-00000001",
+        "document_type": "factura",
+        "letter": "A",
         "currency": "ARS",
-        "subtotal": "0.10",
-        "tax": "0.20",
-        "total": "0.30",
+        "subtotal": "1.000,00",
+        "tax": "210,00",
+        "total": "1.210,00",
     }
 
 
-def test_valid_receipt_keeps_decimal_strings_and_requires_human_review(client, receipt):
-    response = client.post("/receipts/validate", json=receipt)
-    assert response.status_code == 200
-    result = response.json()
+def validate(client, receipt, **extra):
+    response = client.post("/receipts/validate", json={"receipt": receipt, **extra})
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def codes(result):
+    return {(issue["code"], issue["field"]) for issue in result["issues"]}
+
+
+def test_valid_factura_is_normalized_and_still_requires_review(client, receipt):
+    result = validate(client, receipt)
     assert result["issues"] == []
+    assert result["receipt"] == {
+        "issuer": "Comercio ficticio",
+        "issuer_cuit": "30000000007",
+        "date": "2026-10-15",
+        "number": "0001-00000001",
+        "document_type": "factura",
+        "letter": "A",
+        "currency": "ARS",
+        "subtotal": "1000.00",
+        "tax": "210.00",
+        "total": "1210.00",
+    }
+    assert result["movement"] == "expense"
     assert result["requires_human_review"] is True
-    assert result["receipt"]["total"] == "0.30"
+    assert set(result["field_status"].values()) == {"unverified"}
 
 
 def test_mismatch_is_reported_without_changing_total(client, receipt):
-    receipt["total"] = "0.31"
-    response = client.post("/receipts/validate", json=receipt)
-    assert response.status_code == 200
-    result = response.json()
-    assert result["receipt"]["total"] == "0.31"
-    assert result["issues"] == [{"code": "total_mismatch", "field": "total"}]
+    receipt["total"] = "1.211,00"
+    result = validate(client, receipt)
+    assert result["receipt"]["total"] == "1211.00"
+    assert codes(result) == {("total_mismatch", "total")}
+    assert result["field_status"]["total"] == "conflict"
+
+
+def test_total_is_not_confused_with_subtotal(client, receipt):
+    receipt.update(subtotal="1.210,00", tax="210,00", total="1.000,00")
+    assert codes(validate(client, receipt)) == {("total_below_subtotal", "total")}
+
+
+def test_vat_already_included_is_not_added_twice(client, receipt):
+    receipt.update(subtotal="1.210,00", tax="210,00", total="1.210,00")
+    assert codes(validate(client, receipt)) == {("tax_already_included", "subtotal")}
+
+
+def test_credit_note_is_not_an_ordinary_purchase(client, receipt):
+    receipt["document_type"] = "nota_credito"
+    result = validate(client, receipt)
+    assert result["movement"] == "credit"
+    assert ("credit_note", "document_type") in codes(result)
+    assert all(i["severity"] == "info" for i in result["issues"])
+
+
+def test_dollars_are_never_converted_to_pesos(client, receipt):
+    receipt.update(currency="US$", subtotal="100,00", tax="21,00", total="121,00")
+    result = validate(client, receipt)
+    assert result["receipt"]["currency"] == "USD"
+    assert result["receipt"]["total"] == "121.00"
+    assert codes(result) == {("foreign_currency", "currency")}
+
+
+def test_invalid_cuit_is_flagged_and_left_empty(client, receipt):
+    receipt["issuer_cuit"] = "30-00000000-8"
+    result = validate(client, receipt)
+    assert result["receipt"]["issuer_cuit"] is None
+    assert codes(result) == {("invalid_cuit", "issuer_cuit")}
+    assert result["field_status"]["issuer_cuit"] == "conflict"
+
+
+def test_future_date_is_flagged(client, receipt):
+    receipt["date"] = "01/01/2999"
+    assert codes(validate(client, receipt)) == {("future_date", "date")}
+
+
+def test_factura_c_does_not_discriminate_vat(client, receipt):
+    receipt.update(letter="C", subtotal=None, tax="210,00", total="1.210,00")
+    assert codes(validate(client, receipt)) == {("unexpected_tax", "tax")}
+
+
+def test_factura_b_and_ticket_do_not_require_subtotal_or_tax(client, receipt):
+    receipt.update(letter="B", subtotal=None, tax=None)
+    assert validate(client, receipt)["issues"] == []
+    receipt.update(document_type="ticket", letter=None, issuer_cuit=None, number=None)
+    result = validate(client, receipt)
+    assert result["issues"] == []
+    assert result["field_status"]["tax"] == "empty"
+
+
+def test_factura_a_requires_discriminated_vat(client, receipt):
+    receipt.update(subtotal=None, tax=None)
+    assert codes(validate(client, receipt)) == {
+        ("missing_field", "subtotal"),
+        ("missing_field", "tax"),
+    }
+
+
+def test_ambiguous_amount_stays_null_with_warning(client, receipt):
+    receipt.update(letter="B", subtotal=None, tax=None, total="1.210")
+    result = validate(client, receipt)
+    assert result["receipt"]["total"] is None
+    assert codes(result) == {("ambiguous_amount", "total")}
+    assert result["field_status"]["total"] == "conflict"
 
 
 def test_missing_fields_stay_missing_and_skip_sum(client):
-    response = client.post("/receipts/validate", json={})
-    assert response.status_code == 200
-    result = response.json()
+    result = validate(client, {})
     assert all(value is None for value in result["receipt"].values())
-    assert {issue["field"] for issue in result["issues"]} == {
-        "issuer",
-        "date",
-        "number",
-        "currency",
-        "subtotal",
-        "tax",
-        "total",
+    assert codes(result) == {
+        ("missing_field", field) for field in ("issuer", "date", "currency", "total")
     }
-    assert all(issue["code"] == "missing_field" for issue in result["issues"])
-    assert result["requires_human_review"] is True
-
-
-@pytest.mark.parametrize("amount", ["0.00", "12", "12.5", "9999999999.99"])
-def test_supported_amounts(client, receipt, amount):
-    receipt.update(subtotal=amount, tax="0", total=amount)
-    response = client.post("/receipts/validate", json=receipt)
-    assert response.status_code == 200
-    assert response.json()["issues"] == []
-
-
-@pytest.mark.parametrize(
-    "amount",
-    [
-        -1,
-        0.1,
-        10,
-        True,
-        "-0.01",
-        "NaN",
-        "Infinity",
-        "1.001",
-        "1,20",
-        "1e2",
-        "",
-        " 1.00 ",
-        "10000000000.00",
-    ],
-)
-def test_invalid_amounts_are_rejected(client, receipt, amount):
-    receipt["total"] = amount
-    assert client.post("/receipts/validate", json=receipt).status_code == 422
+    assert result["movement"] == "unknown"
+    assert result["field_status"]["issuer"] == "missing"
 
 
 @pytest.mark.parametrize(
     "change",
     [
-        {"currency": "USD"},
-        {"date": "2026-02-30"},
-        {"issuer": "   "},
+        {"document_type": "remito"},
+        {"letter": "Z"},
+        {"issuer": "x" * 201},
         {"unexpected": "ignored?"},
+        {"total": 121.0},
     ],
 )
 def test_invalid_contract_is_rejected(client, receipt, change):
     receipt.update(change)
-    assert client.post("/receipts/validate", json=receipt).status_code == 422
-
-
-def test_explicit_null_is_reported_not_invented(client, receipt):
-    receipt["tax"] = None
-    response = client.post("/receipts/validate", json=receipt)
-    assert response.status_code == 200
-    assert response.json()["issues"] == [{"code": "missing_field", "field": "tax"}]
-    assert response.json()["receipt"]["tax"] is None
+    response = client.post("/receipts/validate", json={"receipt": receipt})
+    assert response.status_code == 422
