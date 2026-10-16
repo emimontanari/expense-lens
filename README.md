@@ -21,7 +21,8 @@ cuándo **no** confiar en lo que leyó.
 4. **Normaliza** formatos argentinos con código determinista.
 5. **Valida** con reglas fiscales y aritméticas, y contrasta contra el QR.
 6. **Muestra el estado de cada campo** para que la persona revise y corrija.
-7. **Guarda el gasto** solo cuando la persona confirma, frena duplicados y arma
+7. **Sugiere la categoría** (IA y reglas), medida contra lo que elige la persona.
+8. **Guarda el gasto** solo cuando la persona confirma, frena duplicados y arma
    el historial con filtros, totales por moneda y exportación CSV.
 
 | Estado del campo | Significado |
@@ -130,6 +131,28 @@ total en `subtotal`, aunque el prompt pide `null`. Ninguna regla lo detectaba
 La regla no mejora lo que lee el modelo: mejora cuándo el sistema sabe que no
 debe confiar. El costo es más revisión humana, y queda medido.
 Muestra chica y sintética: no es una estimación para comprobantes reales.
+
+### Categoría sugerida: modelo contra línea base (`eval/results/eval-003`)
+
+El modelo sugiere la categoría en la **misma llamada** de extracción, sin costo
+extra; una línea base de palabras clave sobre el emisor compite con él. Ambos
+usan el mismo criterio escrito por categoría (`CATEGORY_GUIDE`), compartido con
+las etiquetas del dataset. La persona siempre decide.
+
+| Sobre 10 casos evaluados (2 HTTP 429) | Modelo | Reglas por emisor |
+|---|---|---|
+| Exactitud de categoría | 10/10 | 3/10 |
+
+Las reglas casi no se equivocan: **se abstienen** cuando el emisor no es
+reconocible ("Cafetería Segura", "Servicios Imaginarios SRL"). El modelo aporta
+cobertura porque lee el detalle ("Almuerzo ejecutivo", "Mantenimiento mensual").
+El dataset es sintético y explícito: es un resultado fácil, no una garantía.
+En uso real, cada gasto guarda si la persona aceptó la sugerencia y
+`GET /expenses/stats` informa la tasa de aceptación por fuente.
+
+En esta corrida los campos llegaron al 100% y el modelo no repitió la copia del
+total en `subtotal`. Con 10 casos no se distingue el efecto del prompt nuevo de la
+variación entre corridas, así que la regla `subtotal_equals_total` se mantiene.
 
 ```bash
 uv run python eval/run.py eval/results/<nombre> --allow-provider --pause-seconds 20
@@ -252,7 +275,6 @@ No se considera un typecheck limpio ni se suprimen esos diagnósticos.
 
 ## Próximos pasos
 
-- **Categoría sugerida por IA** y su evaluación contra las elecciones humanas.
 - **Paneles:** gastos mensuales, recurrentes y presupuestos.
 - **Dataset ampliado:** comprobantes reales anonimizados con autorización.
 - **Canal WhatsApp** como Adapter de entrada sobre el mismo pipeline.
