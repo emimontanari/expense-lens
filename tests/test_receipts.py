@@ -158,3 +158,17 @@ def test_invalid_contract_is_rejected(client, receipt, change):
     receipt.update(change)
     response = client.post("/receipts/validate", json={"receipt": receipt})
     assert response.status_code == 422
+
+
+def test_subtotal_copied_from_total_without_tax_is_flagged(client, receipt):
+    """eval-002: el modelo copió el total como subtotal en facturas B, C y E."""
+    receipt.update(letter="B", subtotal="3.900,00", tax=None, total="3.900,00")
+    result = validate(client, receipt)
+    assert codes(result) == {("subtotal_equals_total", "subtotal")}
+    assert result["receipt"]["subtotal"] == "3900.00"
+    assert result["field_status"]["subtotal"] == "conflict"
+
+
+def test_subtotal_equal_to_total_with_zero_tax_is_not_flagged(client, receipt):
+    receipt.update(letter="B", subtotal="3.900,00", tax="0,00", total="3.900,00")
+    assert validate(client, receipt)["issues"] == []

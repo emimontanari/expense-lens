@@ -1,6 +1,8 @@
 """Puntuador determinista y offline de un directorio de resultados de eval/run.py.
 
 Uso: python eval/score.py <results-dir>. Escribe metrics.json y report.md.
+Con --replay-rules reaplica las reglas actuales a las transcripciones guardadas
+(sin red) y escribe metrics-replay.json y report-replay.md; no toca la corrida.
 Un error del proveedor o una salida inválida nunca cuenta como acierto: se informa
 aparte y queda fuera de los denominadores de exactitud.
 """
@@ -11,6 +13,9 @@ import statistics
 from collections import Counter
 from decimal import Decimal
 from pathlib import Path
+
+from expense_lens.receipts import FiscalQr, RawReceipt
+from expense_lens.rules import review_receipt
 
 FIELDS = (
     "issuer",
@@ -191,16 +196,46 @@ def report(metrics: dict) -> str:
     return "\n".join(lines)
 
 
+def replay_rules(attempts: list[dict]) -> list[dict]:
+    """Reaplica normalización y reglas actuales; los valores canónicos no cambian."""
+    replayed = []
+    for attempt in attempts:
+        if "result" not in attempt:
+            replayed.append(attempt)
+            continue
+        old = attempt["result"]
+        raw = RawReceipt.model_validate(
+            {k: None if v is None else str(v) for k, v in old["receipt"].items()}
+        )
+        qr = FiscalQr.model_validate(old["fiscal_qr"]) if old["fiscal_qr"] else None
+        result = review_receipt(raw, qr)
+        result.fiscal_qr_status = old["fiscal_qr_status"]
+        replayed.append({**attempt, "result": result.model_dump(mode="json")})
+    return replayed
+
+
 def main(argv: list[str] | None = None) -> dict:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("results", type=Path)
+    parser.add_argument("--replay-rules", action="store_true")
     args = parser.parse_args(argv)
     plan, attempts = load(args.results)
+    suffix = ""
+    if args.replay_rules:
+        attempts, suffix = replay_rules(attempts), "-replay"
     metrics = score(plan, attempts)
-    (args.results / "metrics.json").write_text(
+    (args.results / f"metrics{suffix}.json").write_text(
         json.dumps(metrics, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
     )
-    (args.results / "report.md").write_text(report(metrics))
+    text = report(metrics)
+    if args.replay_rules:
+        text = text.replace(
+            "\n\n",
+            "\n\nReglas reaplicadas offline sobre las transcripciones guardadas;"
+            " el modelo no se volvió a llamar.\n\n",
+            1,
+        )
+    (args.results / f"report{suffix}.md").write_text(text)
     return metrics
 
 

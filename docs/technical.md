@@ -50,6 +50,7 @@ La respuesta incluye `receipt` normalizado (`"1210.00"`, `"2026-10-15"`,
 | `tax_already_included` | `subtotal == total` con IVA > 0: el neto ya incluía el IVA. | warning |
 | `total_below_subtotal` | El total es menor que el subtotal: probable confusión de campos. | warning |
 | `total_mismatch` | `subtotal + tax != total`, exacto con `Decimal`. | warning |
+| `subtotal_equals_total` | Subtotal igual al total sin IVA discriminado: suele ser una copia del total (hallazgo de `eval-002`). | warning |
 | `unexpected_tax` | Factura C con IVA discriminado. | warning |
 | `future_date` | Fecha posterior a hoy. | warning |
 | `qr_mismatch` | El campo contradice el QR fiscal. | warning |

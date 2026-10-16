@@ -366,3 +366,44 @@ def test_runner_rejects_negative_pause(tmp_path, provider):
             [str(tmp_path / "out"), "--allow-provider", "--pause-seconds", "-1"]
         )
     assert calls == []
+
+
+def test_replay_rules_rescores_stored_transcriptions_offline(tmp_path):
+    """Una regla nueva se mide sobre la corrida guardada, sin llamar al modelo."""
+    truth = {**dict.fromkeys(score_module.FIELDS), "total": "3900.00"}
+    stored = {**truth, "subtotal": "3900.00"}
+    plan = {
+        "model": "test",
+        "cases": [
+            {
+                "id": "c1",
+                "expected": {
+                    "receipt": truth,
+                    "flagged_fields": [],
+                    "fiscal_qr_status": "not_found",
+                },
+            }
+        ],
+    }
+    old = {
+        "receipt": stored,
+        "issues": [],
+        "field_status": dict.fromkeys(score_module.FIELDS, "unverified"),
+        "movement": "unknown",
+        "fiscal_qr": None,
+        "fiscal_qr_status": "not_found",
+        "requires_human_review": True,
+    }
+    out = tmp_path / "run"
+    out.mkdir()
+    (out / "plan.json").write_text(json.dumps(plan))
+    attempt = {"case": "c1", "calls": 1, "elapsed_seconds": 1.0, "result": old}
+    (out / "attempts.jsonl").write_text(json.dumps(attempt) + "\n")
+    before = (out / "attempts.jsonl").read_bytes()
+    replayed = score_module.replay_rules([attempt])
+    assert replayed[0]["result"]["field_status"]["subtotal"] == "conflict"
+    assert replayed[0]["result"]["fiscal_qr_status"] == "not_found"
+    score_module.main([str(out), "--replay-rules"])
+    assert (out / "attempts.jsonl").read_bytes() == before
+    assert not (out / "metrics.json").exists()
+    assert "Reglas reaplicadas" in (out / "report-replay.md").read_text()

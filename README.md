@@ -97,14 +97,44 @@ inyección de instrucciones.
 | Falsos verificados | ¿Algún dato erróneo quedó como "verificado"? Debe ser 0. |
 | Tasa de revisión | ¿Cuánto trabajo le queda a la persona? |
 
+### Resultados (`eval/results/eval-002`)
+
+Corrida real con `qwen/qwen3.8-27b`: 12 llamadas, una por caso, sin reintentos.
+Tres casos recibieron HTTP 429 del proveedor y se informan como fallos, no como aciertos.
+
+| Métrica | Sobre 9 casos evaluados |
+|---|---|
+| Exactitud por campo | 96,7% (todos los campos 100% salvo `subtotal`, 66,7%) |
+| Falsos verificados | **0** |
+| Estado del QR fiscal correcto | 100% |
+| Campos inventados | 3 |
+| Latencia | mediana 1,2 s |
+
+**Análisis de errores → regla → re-medición.** Los tres campos inventados fueron
+el mismo patrón: en facturas B, C y E sin IVA discriminado, el modelo copió el
+total en `subtotal`, aunque el prompt pide `null`. Ninguna regla lo detectaba
+(recall de detección 0%). Se agregó `subtotal_equals_total` y se re-midió
+**offline sobre las mismas transcripciones**, sin volver a llamar al modelo:
+
+| | Antes | Con la regla |
+|---|---|---|
+| Recall de detección | 0% (0 de 3) | 100% (3 de 3) |
+| Tasa de revisión | 33% | 67% |
+| Falsos verificados | 0 | 0 |
+
+La regla no mejora lo que lee el modelo: mejora cuándo el sistema sabe que no
+debe confiar. El costo es más revisión humana, y queda medido.
+Muestra chica y sintética: no es una estimación para comprobantes reales.
+
 ```bash
-uv run python eval/run.py results/<nombre> --allow-provider  # 12 llamadas reales
-uv run python eval/score.py results/<nombre>                  # offline, sin red
+uv run python eval/run.py eval/results/<nombre> --allow-provider --pause-seconds 20
+uv run python eval/score.py eval/results/<nombre>                 # offline
+uv run python eval/score.py eval/results/<nombre> --replay-rules  # reglas actuales
 ```
 
 El runner hace una llamada por caso, sin reintentos, y nunca sobrescribe una
-corrida. Los errores del proveedor se informan aparte: nunca cuentan como acierto.
-Una primera prueba con un único recibo está en
+corrida. `eval-001` lanzó los casos sin pausa: 10 de 12 recibieron HTTP 429 y se
+conservan así. La primera prueba con un único recibo está en
 [eval/results/smoke-001](eval/results/smoke-001/README.md).
 
 ## Stack

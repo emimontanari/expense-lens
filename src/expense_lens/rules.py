@@ -87,6 +87,10 @@ def check_rules(receipt: Receipt, today: date) -> list[ValidationIssue]:
             issues.append(issue("total_below_subtotal", "total"))
         elif subtotal + tax != total:
             issues.append(issue("total_mismatch", "total"))
+    if subtotal is not None and tax is None and subtotal == total:
+        # Sin IVA discriminado, un subtotal igual al total suele ser una copia del
+        # total hecha por el modelo (hallazgo de eval-002), no un dato leído.
+        issues.append(issue("subtotal_equals_total", "subtotal"))
     if receipt.letter == "C" and tax is not None and tax > 0:
         issues.append(issue("unexpected_tax", "tax"))
     if receipt.date is not None and receipt.date > today:

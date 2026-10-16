@@ -105,6 +105,7 @@ IssueCode = Literal[
     "total_mismatch",
     "total_below_subtotal",
     "tax_already_included",
+    "subtotal_equals_total",
     "unexpected_tax",
     "future_date",
     "credit_note",

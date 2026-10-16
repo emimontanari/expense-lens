@@ -75,6 +75,7 @@ const issueMessages: Record<string, string> = {
   total_mismatch: 'El total no coincide con subtotal + impuestos.',
   total_below_subtotal: 'El total es menor que el subtotal; puede ser un subtotal confundido con el total.',
   tax_already_included: 'El subtotal parece incluir ya el IVA; no se suma de nuevo.',
+  subtotal_equals_total: 'El subtotal es igual al total sin IVA discriminado: puede ser una copia del total. Confírmalo o déjalo vacío.',
   unexpected_tax: 'Este tipo de comprobante no suele discriminar impuestos.',
   future_date: 'La fecha es posterior a hoy.',
   credit_note: 'Es una nota de crédito: no es una compra común.',
