@@ -35,3 +35,5 @@ que era el contrato al ejecutarla. La aplicación no reintenta automáticamente.
 
 Continuar con carga, vista previa y revisión manual; ampliar la evaluación con
 casos variados en otra tanda autorizada, sin reutilizar esto como un holdout.
+
+Su runner vivió en el commit `466bbfa` (`eval/smoke.py`); fue reemplazado por `eval/run.py` y `eval/score.py`.
