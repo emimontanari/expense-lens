@@ -130,7 +130,7 @@ El presupuesto de píxeles limita los bitmaps solicitados, **no es un límite du
 de RAM del parser nativo**. El proceso separado limita su duración y evita el
 uso concurrente de PDFium en threads, pero no constituye una sandbox. La inspección
 previa con pypdf aún ocurre en el proceso servidor, sin timeout dedicado.
-No hay persistencia.
+La extracción no guarda nada; solo `POST /expenses` persiste, tras confirmación humana.
 
 ## Inspeccionar un archivo (solo desarrollo local)
 
@@ -175,6 +175,67 @@ ni validez fiscal; prueban ingreso, no calidad de OCR. Para regenerarlos:
 ```bash
 uv run python examples/generate_receipts.py
 ```
+
+## Gastos guardados (`expenses.py`, `storage.py`)
+
+Un gasto se guarda solo cuando la persona lo confirma. **No se guardan imágenes ni
+PDF**: únicamente los datos normalizados y `document_sha256` (hash del archivo,
+para detectar el mismo documento).
+
+**Ubicación:** SQLite de la biblioteca estándar (`sqlite3`, sin dependencias nuevas)
+en la ruta de la variable `EXPENSE_LENS_DB`, por defecto `data/expenses.sqlite`
+(el directorio se crea y `data/` está en `.gitignore`). El esquema se crea al abrir
+la base. Los importes se guardan como texto decimal canónico, nunca como `float`, y
+todo el SQL es parametrizado. Los tests reemplazan la dependencia `get_db` por una
+base en un directorio temporal.
+
+| Endpoint | Respuesta |
+|---|---|
+| `POST /expenses` | 201 `Expense` |
+| `GET /expenses?date_from&date_to&q&category&min_total&max_total&currency` | 200 `{items, totals}`; orden por fecha y luego id, descendente |
+| `GET /expenses/{id}` | 200 `Expense` o 404 `expense_not_found` |
+| `PUT /expenses/{id}` | 200 `Expense`; recalcula todo y conserva `created_at` |
+| `DELETE /expenses/{id}` | 204; borrado definitivo |
+| `GET /expenses/export.csv` (mismos filtros) | CSV UTF-8 con BOM |
+| `GET /expenses/stats` | `{count, with_extraction, correction_rate_by_field, qr_verified_rate}` |
+
+El cuerpo de `POST` y `PUT` es `{receipt, fiscal_qr, category, extracted,
+document_sha256, allow_duplicate}`. Categorías: `supermercado`, `combustible`,
+`restaurantes`, `servicios`, `transporte`, `salud`, `hogar`, `otros`.
+`extracted` es la salida normalizada original de `/receipts/extract` (o `null` si
+se cargó a mano). El modelo rechaza campos extra: **el cliente no puede enviar
+estados**; el servidor vuelve a ejecutar `review_receipt` y calcula `issues`,
+`field_status` y `movement`.
+
+### Errores
+
+- **422 `incomplete_expense`**: tras normalizar faltan `issuer`, `date`, `currency`
+  o `total`. `detail.fields` lista los campos y no se guarda nada.
+- **409 `duplicate_expense`**: `detail.matches` lista `{id, reason}` y no se guarda
+  nada, salvo `allow_duplicate: true`, que guarda con `duplicate_of` con los ids.
+
+| `reason` | Condición |
+|---|---|
+| `fiscal_key` | Mismo CUIT, tipo, letra, punto de venta y número, todos no nulos. Se comparan como enteros: `0001-00000001` == `00001-00000001`. |
+| `same_file` | Mismo `document_sha256`. |
+| `similar` | Misma fecha, moneda y total, y mismo CUIT (si ambos lo tienen) o mismo emisor sin distinguir mayúsculas. |
+
+En `PUT` el propio registro se excluye de la comparación.
+
+### Totales, CSV y telemetría
+
+- `totals` agrupa por moneda y nunca mezcla monedas: `expenses` suma los gastos,
+  `credits` las notas de crédito, `net = expenses - credits`. Todo con `Decimal`.
+- `signed_total` es negativo en notas de crédito. El CSV usa `importe = signed_total`,
+  coma como separador y punto decimal. Las celdas de texto que empiezan con
+  `=`, `+`, `-`, `@`, tabulación o retorno de carro se prefijan con `'`
+  (inyección de fórmulas); los importes numéricos no.
+- `corrected_fields` son los campos cuyo valor final normalizado difiere de
+  `extracted` (`null` si no hubo extracción). `/expenses/stats` calcula la tasa de
+  corrección por campo sobre los gastos con extracción y la tasa de gastos con algún
+  campo `verified` por el QR fiscal sobre todos los gastos.
+- Los filtros por texto e importe se aplican en Python con `Decimal`, pensando en
+  un uso local de un solo usuario; no hay autenticación ni paginación.
 
 ## Canales de ingreso previstos
 

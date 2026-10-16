@@ -10,6 +10,7 @@ from expense_lens.documents import (
     DocumentInspection,
     inspect_document,
 )
+from expense_lens.expenses import router as expenses_router
 from expense_lens.extraction import ExtractionError, extract_document_receipt
 from expense_lens.receipts import ReceiptValidation, ValidationRequest
 from expense_lens.rules import review_receipt
@@ -19,6 +20,9 @@ app = FastAPI(
     version="0.1.0",
     description="Extracción y revisión humana de recibos y facturas.",
 )
+
+
+app.include_router(expenses_router)
 
 
 class HealthResponse(BaseModel):
