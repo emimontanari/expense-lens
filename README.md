@@ -1,16 +1,146 @@
 # ExpenseLens
 
-Aplicación de portfolio para extraer datos de recibos y facturas, validar
-inconsistencias y revisarlos antes de exportar. La IA interpreta; el código
-calcula; la persona aprueba.
+**Convierte tickets y facturas argentinas en gastos verificables.** La IA lee el
+comprobante, el código normaliza y valida, el QR fiscal de ARCA lo contrasta y
+una persona confirma. Ningún dato se acepta solo porque lo dijo un modelo.
 
-**Estado actual:** API FastAPI y frontend React + TypeScript para cargar archivos
-JPEG, PNG y PDF, extraer datos, corregirlos y validar importes antes de la revisión
-humana. Incluye vista previa, consentimiento explícito, ejemplos ficticios y pruebas
-automatizadas. No guarda comprobantes ni ofrece historial o exportación CSV.
-La extracción de imágenes y PDF con Groq está implementada y deshabilitada por
-defecto. La [primera prueba real](eval/results/smoke-001/README.md) obtuvo dos
-respuestas correctas y dos límites HTTP 429; no se reintentaron los fallos.
+> La IA interpreta; el código calcula; la persona aprueba.
+
+## El problema
+
+Cargar gastos a mano es lento y propenso a errores: importes con `1.234,56`,
+facturas A/B/C con y sin IVA discriminado, notas de crédito que restan, pagos en
+dólares, subtotales confundidos con totales. Un OCR genérico lee texto; no sabe
+cuándo **no** confiar en lo que leyó.
+
+## Qué hace
+
+1. **Carga** un JPEG, PNG o PDF (hasta 3 páginas) con vista previa.
+2. **Lee el QR fiscal localmente**, antes de enviar nada afuera.
+3. **Transcribe** con un modelo multimodal (Groq), solo con consentimiento explícito.
+4. **Normaliza** formatos argentinos con código determinista.
+5. **Valida** con reglas fiscales y aritméticas, y contrasta contra el QR.
+6. **Muestra el estado de cada campo** para que la persona revise y corrija.
+
+| Estado del campo | Significado |
+|---|---|
+| Verificado por QR | Coincide con el QR fiscal: dos fuentes independientes de acuerdo. |
+| Revisar | Una regla o el QR lo contradicen. |
+| Faltante | El tipo de comprobante lo requiere y no se leyó. |
+| Sin verificar | Lo leyó el modelo, sin segunda fuente. |
+
+## Arquitectura
+
+```mermaid
+flowchart LR
+    A[Archivo] --> B[Inspección<br/>límites y formato]
+    B --> C[QR fiscal ARCA<br/>local, zxing-cpp]
+    B --> D[Modelo multimodal<br/>transcribe, no calcula]
+    D --> E[Normalización<br/>1.234,56 · 15/10/2026 · CUIT]
+    E --> F[Reglas argentinas<br/>IVA, NC, moneda, totales]
+    C --> F
+    F --> G[Estado por campo]
+    G --> H[Revisión humana]
+    H -->|correcciones| E
+```
+
+El mismo pipeline determinista procesa la salida del modelo y las correcciones
+de la persona: `POST /receipts/validate` vuelve a normalizar, validar y contrastar
+con el QR. El proveedor de IA es un Adapter reemplazable (`extraction.py`); la
+lógica de negocio (`normalize.py`, `rules.py`, `fiscal_qr.py`) no lo conoce.
+
+## Decisiones de AI engineering
+
+- **El modelo transcribe, el código decide.** El prompt pide copiar `"1.234,56"`
+  tal como aparece. Convertirlo es trabajo de código testeado, no de un LLM que
+  puede confundir separadores o "corregir" una suma.
+- **Confianza por contraste, no por autoevaluación.** No se le pregunta al
+  modelo qué tan seguro está. Un campo es confiable cuando una fuente
+  independiente (el QR fiscal) coincide; si no, queda "sin verificar".
+- **Ante ambigüedad, `null`.** `1.234` puede ser mil doscientos treinta y cuatro
+  o uno con decimales: se marca para revisión en lugar de adivinar.
+- **El documento es dato no confiable.** Instrucciones escritas en la imagen se
+  ignoran, y el QR también se valida estrictamente (host oficial, versión,
+  dígito verificador del CUIT). Hay un caso de inyección en el dataset.
+- **Fallar visible y acotado.** Una llamada por solicitud, sin reintentos;
+  un HTTP 429 se informa como tal. El modelo nunca es la única defensa.
+- **Medir antes de afirmar.** Un dataset con verdad conocida mide exactitud
+  por campo y, sobre todo, si el sistema detecta sus propios errores.
+
+## Especialización argentina
+
+- Importes `1.234,56`, `1,234.56`, `$`, `US$`, `U$S`; fechas día/mes/año.
+- CUIT con dígito verificador módulo 11.
+- Facturas A, B, C, E y M; notas de crédito y débito; tickets.
+- Factura A exige IVA discriminado; B y C no; Factura C con IVA se advierte.
+- Nota de crédito → movimiento que **resta**, no una compra.
+- Dólares y euros se conservan en su moneda: **nunca** se convierten.
+- QR fiscal ARCA (RG 4892/2020): CUIT, fecha, punto de venta, número, tipo,
+  moneda y total contrastados contra lo visible.
+
+Detalle de contratos, reglas y límites: [docs/technical.md](docs/technical.md).
+
+## Evaluación
+
+`eval/dataset/` tiene 12 comprobantes **ficticios** con verdad conocida,
+generados por `eval/generate_dataset.py`: factura A con QR coincidente y con
+QR que contradice el total, factura B con IVA incluido, factura C, ticket de
+supermercado, nota de crédito, factura en USD, foto inclinada y borrosa, PDF
+multipágina, importe ambiguo, imagen que no es un comprobante e intento de
+inyección de instrucciones.
+
+| Métrica | Pregunta que responde |
+|---|---|
+| Exactitud por campo | ¿Cuántos datos se leyeron bien? |
+| Campos inventados | ¿El modelo completó algo que no figura? |
+| Recall de detección | De los datos erróneos, ¿cuántos quedaron marcados para revisar? |
+| Falsos verificados | ¿Algún dato erróneo quedó como "verificado"? Debe ser 0. |
+| Tasa de revisión | ¿Cuánto trabajo le queda a la persona? |
+
+### Resultados (`eval/results/eval-002`)
+
+Corrida real con `qwen/qwen3.8-27b`: 12 llamadas, una por caso, sin reintentos.
+Tres casos recibieron HTTP 429 del proveedor y se informan como fallos, no como aciertos.
+
+| Métrica | Sobre 9 casos evaluados |
+|---|---|
+| Exactitud por campo | 96,7% (todos los campos 100% salvo `subtotal`, 66,7%) |
+| Falsos verificados | **0** |
+| Estado del QR fiscal correcto | 100% |
+| Campos inventados | 3 |
+| Latencia | mediana 1,2 s |
+
+**Análisis de errores → regla → re-medición.** Los tres campos inventados fueron
+el mismo patrón: en facturas B, C y E sin IVA discriminado, el modelo copió el
+total en `subtotal`, aunque el prompt pide `null`. Ninguna regla lo detectaba
+(recall de detección 0%). Se agregó `subtotal_equals_total` y se re-midió
+**offline sobre las mismas transcripciones**, sin volver a llamar al modelo:
+
+| | Antes | Con la regla |
+|---|---|---|
+| Recall de detección | 0% (0 de 3) | 100% (3 de 3) |
+| Tasa de revisión | 33% | 67% |
+| Falsos verificados | 0 | 0 |
+
+La regla no mejora lo que lee el modelo: mejora cuándo el sistema sabe que no
+debe confiar. El costo es más revisión humana, y queda medido.
+Muestra chica y sintética: no es una estimación para comprobantes reales.
+
+```bash
+uv run python eval/run.py eval/results/<nombre> --allow-provider --pause-seconds 20
+uv run python eval/score.py eval/results/<nombre>                 # offline
+uv run python eval/score.py eval/results/<nombre> --replay-rules  # reglas actuales
+```
+
+El runner hace una llamada por caso, sin reintentos, y nunca sobrescribe una
+corrida. `eval-001` lanzó los casos sin pausa: 10 de 12 recibieron HTTP 429 y se
+conservan así. La primera prueba con un único recibo está en
+[eval/results/smoke-001](eval/results/smoke-001/README.md).
+
+## Stack
+
+Python 3.12 · FastAPI · Pydantic · Groq (`qwen/qwen3.8-27b`) · PDFium ·
+zxing-cpp · React + TypeScript + Vite · Vitest · pytest · Ruff.
 
 ## Ejecutar localmente
 
@@ -62,99 +192,12 @@ no se conserva al cambiar de archivo. Más detalles en [web/README.md](web/READM
 
 ### Proveedor seleccionado: Groq
 
-El `.env` local contiene `GROQ_API_KEY`, reutilizada de InboxOps con autorización.
-Está ignorado por Git y no debe publicarse. En otra instalación, crear `.env`
-localmente y configurar esa variable sin pegar su valor en documentación o logs.
-El comando de arranque usa `uv --env-file` para cargarla en el proceso.
+Crear un `.env` local con `GROQ_API_KEY`. Está ignorado por Git y no debe
+publicarse; no pegar su valor en documentación o logs. El comando de arranque
+usa `uv --env-file` para cargarla en el proceso.
 
-Se verificó su carga sin mostrar la clave ni hacer llamadas al proveedor.
 La clave sola no habilita extracción: se requiere `EXPENSE_LENS_ENABLE_GROQ=1`
 en el entorno del servidor, además del consentimiento explícito por solicitud.
-
-## Extraer un comprobante con Groq (opt-in, solo local)
-
-`POST /receipts/extract` recibe JPEG, PNG o PDF como cuerpo binario, con los mismos
-límites de inspección. Requiere el header `X-Allow-External-Processing: true`;
-sin él devuelve 403. Con el proveedor deshabilitado o sin clave devuelve 503.
-**Ese header expresa consentimiento, no es autenticación ni control de acceso.**
-
-Al habilitarlo y usar ese endpoint, se envía la imagen completa a Groq, incluidos
-los metadatos presentes. En PDF se envían imágenes renderizadas de todas sus páginas,
-no el archivo original ni sus metadatos no visibles. Usar solo ejemplos ficticios o documentos cuyo envío
-esté autorizado; no se ha evaluado aquí la política de retención del proveedor.
-No habilitar logs de depuración del SDK/HTTP con documentos o claves reales.
-
-El Adapter usa `qwen/qwen3.8-27b`, listado en la [documentación de visión de Groq](https://console.groq.com/docs/vision).
-La cuenta respondió con ese modelo en JPEG y PDF con texto en la primera prueba.
-PNG y PDF escaneado recibieron HTTP 429, no un resultado de extracción.
-Se usa JSON mode, no una garantía de esquema: se exigen las siete claves y se
-valida con Pydantic antes de las reglas monetarias. Datos desconocidos quedan
-`null`; los importes no se corrigen. La revisión humana sigue siendo obligatoria.
-
-Una solicitud realiza como máximo una llamada: sin retries ni reparación,
-1024 tokens máximos de salida y timeout SDK de 20 segundos por operación de red
-(no un límite total de duración de la petición). Errores 502/503/504 no incluyen
-respuestas crudas del proveedor. Un HTTP 429 se distingue como
-`503 provider_rate_limited`, sin reintentar. Los tests usan MockTransport y clave ficticia.
-
-### PDF con texto o escaneado
-
-Se renderizan todas las páginas en orden, sin extraer texto por un camino
-alternativo. Se envían juntas en **una sola llamada**, con un único resultado
-para el comprobante; nunca se suman automáticamente totales entre páginas.
-Un archivo debe contener un único comprobante: el prompt pide no mezclar
-identidades, pero no hay detección determinista de varios comprobantes.
-
-- Hasta 3 páginas y 5 MiB de entrada; rechaza PDF cifrados.
-- Renderizador PDFium en un proceso nuevo por documento, sin heredar claves
-  ni variables del servidor. No se ejecuta PDFium simultáneamente en threads.
-- Máximo 1400 píxeles por lado, 2 millones de píxeles por página y 5 MiB de JPEG
-  generados en total; escala máxima 2 píxeles por punto. La reducción puede
-  perder letras pequeñas: no demuestra exactitud de lectura.
-- Proceso de render con timeout de 10 segundos. Fallos y timeout devuelven 422;
-  exceso de geometría o salida devuelve 413. Se procesa todo antes de llamar a Groq.
-- Se cierran páginas y bitmaps por página. No hay almacenamiento intermedio.
-
-El presupuesto de píxeles limita los bitmaps solicitados, **no es un límite duro
-de RAM del parser nativo**. El proceso separado limita su duración y evita el
-uso concurrente de PDFium en threads, pero no constituye una sandbox. La inspección
-previa con pypdf aún ocurre en el proceso servidor, sin timeout dedicado.
-No hay persistencia.
-
-## Validar un comprobante
-
-`POST /receipts/validate` recibe datos ya normalizados; no una imagen ni un PDF.
-Podés probarlo desde `/docs` con este ejemplo ficticio:
-
-```json
-{
-  "issuer": "Comercio ficticio",
-  "date": "2026-10-15",
-  "number": "0001-00000001",
-  "currency": "ARS",
-  "subtotal": "100.00",
-  "tax": "21.00",
-  "total": "121.00"
-}
-```
-
-- Primer alcance: ARS y comprobantes simples sin descuentos, retenciones ni
-  cargos adicionales. `tax` representa el total de impuestos separado del subtotal.
-  No es una validación fiscal ni cubre todos los formatos de factura argentina.
-- Importes como **strings** con punto decimal: hasta 10 dígitos enteros y 2
-  decimales. No se admiten números JSON, negativos, coma, notación científica
-  ni redondeos implícitos. Los cálculos usan `Decimal`.
-- Todos los campos pueden omitirse o ser `null`: quedan ausentes y generan
-  `missing_field`. Cero es un importe válido, no un faltante.
-- Si están los tres importes, se compara `subtotal + tax == total` exactamente;
-  una diferencia genera `total_mismatch`, sin modificar el total.
-- La respuesta 200 incluye `receipt`, `issues` y `requires_human_review: true`,
-  incluso cuando no se detectan problemas. No se guarda ni aprueba nada.
-- Datos mal formados y campos desconocidos devuelven 422. La fecha debe ser una
-  fecha válida; no se verifica su autenticidad. Los textos se recortan en sus
-  extremos y deben contener entre 1 y 200 caracteres.
-
-Que los importes cierren no demuestra que coincidan con el documento original.
 
 ## Verificar
 
@@ -162,8 +205,8 @@ Ejecutar desde `expense-lens/`, no desde el directorio de estudio padre.
 
 ```bash
 uv run pytest -q
-uv run ruff check src tests examples
-uv run ruff format --check src tests examples
+uv run ruff check .
+uv run ruff format --check .
 (cd web && npm test && npm run build)
 ```
 
@@ -178,94 +221,21 @@ iniciado desde el workspace padre puede seguir sin reconocerlos; durante este
 incremento reportó imports faltantes, aunque la suite en el entorno uv pasa.
 No se considera un typecheck limpio ni se suprimen esos diagnósticos.
 
-## Diseño incremental
+## Límites conocidos
 
-| Área | Decisión |
-|---|---|
-| API | Python + FastAPI; contratos con Pydantic. |
-| Coordinación prevista | Pipeline explícito, sin LangChain ni LangGraph inicialmente. |
-| Extracción | SDK Groq, `qwen/qwen3.8-27b`, JPEG/PNG y PDF renderizado, opt-in. |
-| Reglas actuales | Faltantes y suma exacta de importes con `Decimal`. |
-| Interfaz | React + TypeScript + Vite; carga, vista previa y revisión manual. |
-
-Flujo objetivo: cargar → extraer → normalizar → validar → revisar → exportar.
-No se implementan capas vacías antes de necesitarlas.
-
-## Inspeccionar un archivo (solo desarrollo local)
-
-`POST /documents/inspect` recibe el **archivo como cuerpo binario**, no multipart,
-JSON, base64 ni una URL. No confía en la extensión, nombre ni MIME declarado.
-No escribe el documento a disco ni lo envía a terceros.
-
-```bash
-curl --fail-with-body http://127.0.0.1:8000/documents/inspect \
-  -H 'Content-Type: application/octet-stream' \
-  --data-binary @examples/synthetic/receipt.png
-```
-
-Respuesta: `format` (`jpeg`, `png` o `pdf`), `size_bytes`, `pages` (solo PDF;
-`null` para imagen) y `requires_human_review: true`. No hay campos extraídos.
-
-| Control | Límite / comportamiento |
-|---|---|
-| Bytes reales | Máximo 5 MiB, comprobado durante recepción, sin confiar en Content-Length. |
-| JPEG / PNG | Máximo 12 millones de píxeles; verifica y decodifica; rechaza animación. |
-| PDF | Máximo 3 páginas; rechaza cifrados, documentos vacíos y estructura inválida detectable. |
-| Errores | 413: exceso de límites; 415: formato no admitido; 422: vacío o inválido. |
-
-En `/documents/inspect`, el PDF escaneado pasa la misma inspección estructural
-que un PDF con texto. Ese endpoint no renderiza ni valida todos los streams: recibir 200
-no garantiza que un PDF pueda renderizarse ni que sea seguro o contenga un recibo.
-Un comprobante por archivo es una convención de uso, no una detección automática.
-
-El límite de píxeles se comprueba antes de decodificar imágenes. El de páginas
-requiere parsear el PDF. La inspección corre en un thread; solo el renderizado
-PDF de extracción tiene proceso separado y timeout. **No hay sandbox, límite
-duro de memoria ni control de concurrencia.** Antes de exposición pública o
-WhatsApp se necesitan límites del servidor/proxy, aislamiento de todos los parsers,
-timeout de recepción, autenticación y control de uso. No es antivirus ni sanitizador.
-
-### Ejemplos ficticios
-
-`examples/synthetic/` contiene el mismo recibo ficticio en PNG, JPEG y PDF
-rasterizado (equivalente a escaneado), PDF con texto y un PDF inválido. Todos sin datos reales
-ni validez fiscal; prueban ingreso, no calidad de OCR. Para regenerarlos:
-
-```bash
-uv run python examples/generate_receipts.py
-```
-
-## Canales de ingreso previstos
-
-Separaremos el canal de ingreso del procesamiento:
-
-```text
-Web (primero) ────────────┐
-                         ├─ validar archivo → extraer → validar datos → revisar
-WhatsApp (futuro) ────────┘
-```
-
-El procesamiento no dependerá de objetos HTTP ni de mensajes de WhatsApp.
-La futura integración será un Adapter de entrada, no otro extractor.
-Por ahora no hay conexión, webhook, descarga ni envío de mensajes.
-
-El contenido documental se tratará como dato no confiable, no como instrucciones
-para el futuro modelo. No se habilitan ZIP, documentos Office ni URLs arbitrarias.
-
-WhatsApp requerirá además autenticación del webhook, control de acceso a los
-adjuntos, deduplicación de eventos y una política de retención y borrado.
-El envío de comprobantes a un proveedor externo se informará explícitamente.
-No implementar estos controles todavía no habilita un despliegue público.
+- Desarrollo local: sin autenticación, persistencia ni sandbox de parsers. No
+  desplegar públicamente como está.
+- El QR válido no prueba autenticidad: no se consulta a ARCA.
+- El dataset es sintético: mide comportamiento del pipeline, no generalización
+  a comprobantes reales.
+- Un archivo = un comprobante; no se detectan varios en el mismo documento.
+- No es asesoramiento tributario ni realiza pagos.
 
 ## Próximos pasos
 
-Completar la verificación del flujo en navegador antes de dar esa etapa por cerrada.
-Persistencia, historial y exportación requieren definir su alcance. Cualquier nueva
-tanda de llamadas reales será separada y acotada; los cuatro intentos originales
-se conservan sin reescribir los errores ni tratarlos como respuestas correctas.
-Mantener la ejecución local hasta aislar todos los parsers y completar los controles
-de despliegue; WhatsApp y almacenamiento siguen fuera de este incremento.
-
-Fuera del alcance inicial: pagos, recomendaciones tributarias, integraciones
-bancarias y agentes autónomos. No subir comprobantes reales al repositorio;
-`data/`, bases locales y archivos de entorno están excluidos por `.gitignore`.
+- **Gestión de gastos:** persistencia, historial, categorías, filtros y
+  exportación CSV.
+- **Duplicados:** detectar el mismo comprobante cargado dos veces (CUIT +
+  punto de venta + número).
+- **Dataset ampliado:** comprobantes reales anonimizados con autorización.
+- **Canal WhatsApp** como Adapter de entrada sobre el mismo pipeline.

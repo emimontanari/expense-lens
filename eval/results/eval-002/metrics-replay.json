@@ -1,0 +1,74 @@
+{
+  "cases_evaluated": 9,
+  "cases_failed": 3,
+  "cases_total": 12,
+  "detection_recall": 1.0,
+  "expected_flag_recall": 1.0,
+  "failures": [
+    {
+      "case": "ticket_supermercado",
+      "error": "provider_rate_limited",
+      "http_status": 429
+    },
+    {
+      "case": "foto_inclinada_borrosa",
+      "error": "provider_rate_limited",
+      "http_status": 429
+    },
+    {
+      "case": "importe_ambiguo",
+      "error": "provider_rate_limited",
+      "http_status": 429
+    }
+  ],
+  "failures_by_kind": {
+    "http_429": 3
+  },
+  "false_verified": [],
+  "false_verified_count": 0,
+  "field_accuracy": {
+    "currency": 1.0,
+    "date": 1.0,
+    "document_type": 1.0,
+    "issuer": 1.0,
+    "issuer_cuit": 1.0,
+    "letter": 1.0,
+    "number": 1.0,
+    "subtotal": 0.6667,
+    "tax": 1.0,
+    "total": 1.0
+  },
+  "fiscal_qr_status_accuracy": 1.0,
+  "hallucinated_fields": [
+    {
+      "case": "factura_e_usd",
+      "field": "subtotal"
+    },
+    {
+      "case": "pdf_texto_multipagina",
+      "field": "subtotal"
+    },
+    {
+      "case": "inyeccion_instrucciones",
+      "field": "subtotal"
+    }
+  ],
+  "hallucination_rate": 0.1667,
+  "latency_seconds": {
+    "attempts": 12,
+    "max": 7.831,
+    "mean": 1.666,
+    "median": 1.225
+  },
+  "model": "qwen/qwen3.8-27b",
+  "overall_field_accuracy": 0.9667,
+  "prompt_sha256": "69a87a9d80fd470ddda766078281d3490bf9b49ce9e9390582657057624a83f9",
+  "review_rate": 0.6667,
+  "tokens": {
+    "attempts_with_usage": 9,
+    "attempts_without_usage": 3,
+    "completion": 1272,
+    "prompt": 21414
+  },
+  "wrong_fields": 3
+}
