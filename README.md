@@ -21,6 +21,8 @@ cuándo **no** confiar en lo que leyó.
 4. **Normaliza** formatos argentinos con código determinista.
 5. **Valida** con reglas fiscales y aritméticas, y contrasta contra el QR.
 6. **Muestra el estado de cada campo** para que la persona revise y corrija.
+7. **Guarda el gasto** solo cuando la persona confirma, frena duplicados y arma
+   el historial con filtros, totales por moneda y exportación CSV.
 
 | Estado del campo | Significado |
 |---|---|
@@ -64,6 +66,9 @@ lógica de negocio (`normalize.py`, `rules.py`, `fiscal_qr.py`) no lo conoce.
   dígito verificador del CUIT). Hay un caso de inyección en el dataset.
 - **Fallar visible y acotado.** Una llamada por solicitud, sin reintentos;
   un HTTP 429 se informa como tal. El modelo nunca es la única defensa.
+- **Las correcciones humanas son datos.** Cada gasto guarda qué campos cambió
+  la persona respecto de lo que leyó el modelo; `GET /expenses/stats` muestra la
+  tasa de corrección por campo con uso real, no solo con el dataset.
 - **Medir antes de afirmar.** Un dataset con verdad conocida mide exactitud
   por campo y, sobre todo, si el sistema detecta sus propios errores.
 
@@ -137,9 +142,23 @@ corrida. `eval-001` lanzó los casos sin pausa: 10 de 12 recibieron HTTP 429 y s
 conservan así. La primera prueba con un único recibo está en
 [eval/results/smoke-001](eval/results/smoke-001/README.md).
 
+## Gestión de gastos
+
+- **Confirmar gasto** con categoría: el servidor vuelve a normalizar y validar;
+  nunca confía en estados enviados por el navegador.
+- **Duplicados bloqueados hasta revisión** (409): mismo comprobante fiscal
+  (CUIT, tipo, letra, punto de venta y número), mismo archivo (SHA-256) u
+  operación similar (emisor, fecha y total). La persona ve cuál es el gasto
+  existente y puede guardar de todos modos.
+- **Historial** con filtros por fecha, comercio, categoría, importe y moneda.
+  Totales por moneda sin mezclarlas; las notas de crédito restan.
+- **CSV** listo para planilla, protegido contra inyección de fórmulas.
+- **Privacidad:** SQLite local (`data/expenses.sqlite`, ignorado por Git). Se
+  guardan los datos y el hash del archivo, **nunca la imagen**. Borrado definitivo.
+
 ## Stack
 
-Python 3.12 · FastAPI · Pydantic · Groq (`qwen/qwen3.8-27b`) · PDFium ·
+Python 3.12 · FastAPI · Pydantic · SQLite · Groq (`qwen/qwen3.8-27b`) · PDFium ·
 zxing-cpp · React + TypeScript + Vite · Vitest · pytest · Ruff.
 
 ## Ejecutar localmente
@@ -223,8 +242,8 @@ No se considera un typecheck limpio ni se suprimen esos diagnósticos.
 
 ## Límites conocidos
 
-- Desarrollo local: sin autenticación, persistencia ni sandbox de parsers. No
-  desplegar públicamente como está.
+- Desarrollo local de una sola persona: sin autenticación, separación entre
+  usuarios ni sandbox de parsers. No desplegar públicamente como está.
 - El QR válido no prueba autenticidad: no se consulta a ARCA.
 - El dataset es sintético: mide comportamiento del pipeline, no generalización
   a comprobantes reales.
@@ -233,9 +252,8 @@ No se considera un typecheck limpio ni se suprimen esos diagnósticos.
 
 ## Próximos pasos
 
-- **Gestión de gastos:** persistencia, historial, categorías, filtros y
-  exportación CSV.
-- **Duplicados:** detectar el mismo comprobante cargado dos veces (CUIT +
-  punto de venta + número).
+- **Categoría sugerida por IA** y su evaluación contra las elecciones humanas.
+- **Paneles:** gastos mensuales, recurrentes y presupuestos.
 - **Dataset ampliado:** comprobantes reales anonimizados con autorización.
 - **Canal WhatsApp** como Adapter de entrada sobre el mismo pipeline.
+- **Multiusuario:** autenticación y separación de datos antes de cualquier despliegue.
