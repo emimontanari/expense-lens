@@ -4,6 +4,7 @@ import { categories, categoryLabels, emptyFilters, labels } from './model';
 import type { ExpenseFilters, ExpenseList, ExpenseStats, FieldName } from './model';
 
 const percent = (rate: number) => `${Math.round(rate * 100)}%`;
+const rateText = (rate: number | null) => (rate === null ? 'n/a' : percent(rate));
 
 function StatsCard({ stats }: { stats: ExpenseStats }) {
   const entries = Object.entries(stats.correction_rate_by_field) as [FieldName, number][];
@@ -22,6 +23,9 @@ function StatsCard({ stats }: { stats: ExpenseStats }) {
           ))}
         </ul>
       ) : <p className="muted">Sin datos de corrección todavía.</p>}
+      {stats.suggestion_acceptance && (
+        <p>Aceptación de la sugerencia: IA <strong>{rateText(stats.suggestion_acceptance.model)}</strong> · reglas <strong>{rateText(stats.suggestion_acceptance.rules)}</strong></p>
+      )}
       <p>Verificados por QR: <strong>{stats.qr_verified_rate === null ? 'Sin datos' : percent(stats.qr_verified_rate)}</strong></p>
     </section>
   );
@@ -110,7 +114,7 @@ export function Ledger({ refreshKey = 0 }: { refreshKey?: number }) {
                   <tr key={item.id} className={item.movement === 'credit' ? 'row-credit' : undefined}>
                     <td>{item.receipt.date}</td>
                     <td>{item.receipt.issuer}</td>
-                    <td>{categoryLabels[item.category] ?? item.category}</td>
+                    <td>{categoryLabels[item.category] ?? item.category}{item.suggestion_accepted === false && <small className="muted"> · categoría cambiada</small>}</td>
                     <td className={`num amount${negative ? ' negative' : ''}`}>{item.signed_total} {item.receipt.currency}</td>
                     <td>{item.fiscal_qr_verified ? <span className="badge badge-verified">QR verificado</span> : <span className="muted">—</span>}</td>
                     <td className="row-actions">

@@ -14,7 +14,7 @@ from collections import Counter
 from decimal import Decimal
 from pathlib import Path
 
-from expense_lens.receipts import FiscalQr, RawReceipt
+from expense_lens.receipts import CategorySuggestion, FiscalQr, RawReceipt
 from expense_lens.rules import review_receipt
 
 FIELDS = (
@@ -69,6 +69,7 @@ def score(plan: dict, attempts: list[dict]) -> dict:
     review_cases = 0
     qr_status_correct = 0
     failures = []
+    category_cases = category_model = category_rules = 0
     for case_id, expected in expected_by_case.items():
         attempt = by_case.get(case_id)
         if attempt is None or "result" not in attempt:
@@ -101,6 +102,12 @@ def score(plan: dict, attempts: list[dict]) -> dict:
             expected_flags += 1
             detected_flags += status[field] in UNTRUSTED
         review_cases += any(value in UNTRUSTED for value in status.values())
+        suggestion = result.get("category_suggestion")
+        if "category" in expected and suggestion is not None:
+            # Mismos casos para ambas fuentes; null esperado exige null predicho.
+            category_cases += 1
+            category_model += suggestion["model"] == expected["category"]
+            category_rules += suggestion["rules"] == expected["category"]
         qr_status_correct += result["fiscal_qr_status"] == expected["fiscal_qr_status"]
     count = len(evaluated_cases)
     latencies = [a["elapsed_seconds"] for a in attempts if "elapsed_seconds" in a]
@@ -127,6 +134,11 @@ def score(plan: dict, attempts: list[dict]) -> dict:
         "expected_flag_recall": ratio(detected_flags, expected_flags),
         "review_rate": ratio(review_cases, count),
         "fiscal_qr_status_accuracy": ratio(qr_status_correct, count),
+        "category_accuracy": {
+            "cases": category_cases,
+            "model": ratio(category_model, category_cases),
+            "rules": ratio(category_rules, category_cases),
+        },
         "latency_seconds": {
             "attempts": len(latencies),
             "mean": round(statistics.fmean(latencies), 3) if latencies else None,
@@ -174,6 +186,10 @@ def report(metrics: dict) -> str:
         f"{percent(metrics['review_rate'])}",
         f"- Estado del QR fiscal correcto: "
         f"{percent(metrics['fiscal_qr_status_accuracy'])}",
+        f"- Exactitud de categoría: modelo "
+        f"{percent(metrics['category_accuracy']['model'])}, reglas "
+        f"{percent(metrics['category_accuracy']['rules'])} "
+        f"({metrics['category_accuracy']['cases']} casos)",
         f"- Latencia (s): media {metrics['latency_seconds']['mean']}, "
         f"mediana {metrics['latency_seconds']['median']}, "
         f"máx {metrics['latency_seconds']['max']}",
@@ -210,6 +226,15 @@ def replay_rules(attempts: list[dict]) -> list[dict]:
         qr = FiscalQr.model_validate(old["fiscal_qr"]) if old["fiscal_qr"] else None
         result = review_receipt(raw, qr)
         result.fiscal_qr_status = old["fiscal_qr_status"]
+        stored = old.get("category_suggestion")
+        if stored is None:
+            result.category_suggestion = None  # corrida anterior a la categoría
+        else:
+            # El modelo ya respondió; solo las reglas se reaplican.
+            assert result.category_suggestion is not None
+            result.category_suggestion = CategorySuggestion.of(
+                stored["model"], result.category_suggestion.rules
+            )
         replayed.append({**attempt, "result": result.model_dump(mode="json")})
     return replayed
 

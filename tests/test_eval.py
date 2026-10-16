@@ -56,6 +56,28 @@ def test_dataset_has_twelve_fictitious_cases_with_valid_truth():
         assert set(entry["expected"]["flagged_fields"]) <= set(truth)
 
 
+EXPECTED_CATEGORIES = {
+    "factura_a_qr_coincide": "otros",
+    "factura_a_qr_total_distinto": "servicios",
+    "factura_b_iva_incluido": "hogar",
+    "factura_c": "otros",
+    "ticket_supermercado": "supermercado",
+    "nota_credito_a_qr": "otros",
+    "factura_e_usd": "otros",
+    "foto_inclinada_borrosa": "otros",
+    "pdf_texto_multipagina": "otros",
+    "importe_ambiguo": "otros",
+    "no_es_comprobante": None,
+    "inyeccion_instrucciones": "restaurantes",
+}
+
+
+def test_every_case_declares_its_expected_category():
+    assert {e["id"]: e["expected"]["category"] for e in CASES} == EXPECTED_CATEGORIES
+    non_receipt = next(e for e in CASES if e["id"] == "no_es_comprobante")
+    assert non_receipt["expected"]["category"] is None
+
+
 def test_generator_reproduces_committed_dataset_byte_for_byte(tmp_path):
     generate_dataset.generate(tmp_path)
     committed = {path.name for path in (EVAL / "dataset").iterdir()}
@@ -132,7 +154,8 @@ def provider(monkeypatch):
             return httpx.Response(
                 state["status"], json={"error": {"message": "PRIVATE-ERROR"}}
             )
-        return completion(CASES[len(calls) - 1]["expected"]["receipt"])
+        expected = CASES[len(calls) - 1]["expected"]
+        return completion({**expected["receipt"], "category": expected["category"]})
 
     monkeypatch.setattr(
         extraction,
@@ -187,6 +210,8 @@ def test_runner_output_scores_perfectly_when_model_echoes_truth(tmp_path, provid
     assert metrics["overall_field_accuracy"] == 1.0
     assert metrics["false_verified_count"] == 0
     assert metrics["hallucinated_fields"] == []
+    assert metrics["category_accuracy"]["model"] == 1.0
+    assert metrics["category_accuracy"]["cases"] == len(CASES)
     assert (out / "metrics.json").exists() and (out / "report.md").exists()
 
 
@@ -407,3 +432,97 @@ def test_replay_rules_rescores_stored_transcriptions_offline(tmp_path):
     assert (out / "attempts.jsonl").read_bytes() == before
     assert not (out / "metrics.json").exists()
     assert "Reglas reaplicadas" in (out / "report-replay.md").read_text()
+
+
+# --- categoría -------------------------------------------------------------
+
+
+def suggestion(model, rules):
+    return {"model": model, "rules": rules}
+
+
+@pytest.fixture
+def category_results(tmp_path):
+    def entry(case_id, category):
+        case = expected_case(case_id, {"issuer": case_id, "total": "1.00"})
+        case["expected"]["category"] = category
+        return case
+
+    plan = {
+        "model": "test-model",
+        "cases": [
+            entry("a", "hogar"),
+            entry("b", None),
+            entry("c", "salud"),
+            entry("d", "salud"),
+            entry("e", "servicios"),
+        ],
+    }
+    outcomes = {
+        "a": suggestion("hogar", "hogar"),
+        "b": suggestion(None, None),
+        "d": suggestion("hogar", None),
+        "e": suggestion("servicios", "hogar"),
+    }
+    attempts = []
+    for case_id, value in outcomes.items():
+        attempt = {"case": case_id, **predicted({"issuer": case_id, "total": "1"}, {})}
+        attempt["result"]["category_suggestion"] = value
+        attempts.append(attempt)
+    attempts.append({"case": "c", "error": "provider_error", "http_status": 500})
+    (tmp_path / "plan.json").write_text(json.dumps(plan))
+    (tmp_path / "attempts.jsonl").write_text(
+        "".join(json.dumps(a) + "\n" for a in attempts)
+    )
+    return tmp_path
+
+
+def test_scorer_category_accuracy_for_model_and_rules_on_same_cases(category_results):
+    metrics = score_module.main([str(category_results)])
+    # Casos evaluados con categoría: a, b, d, e (c falló y queda fuera).
+    assert metrics["category_accuracy"] == {"cases": 4, "model": 0.75, "rules": 0.5}
+    report = (category_results / "report.md").read_text()
+    assert "Exactitud de categoría" in report
+    assert "modelo 75.0%" in report and "reglas 50.0%" in report
+
+
+def test_replay_recomputes_rules_baseline_from_stored_issuer(category_results):
+    plan = json.loads((category_results / "plan.json").read_text())
+    ypf = plan["cases"][0]
+    ypf["expected"]["category"] = "combustible"
+    plan["cases"] = [ypf]
+    (category_results / "plan.json").write_text(json.dumps(plan))
+    stored = {
+        "receipt": {"issuer": "YPF Ruta 9", "total": "1.00"},
+        "issues": [],
+        "field_status": dict.fromkeys(score_module.FIELDS, "unverified"),
+        "movement": "unknown",
+        "fiscal_qr": None,
+        "fiscal_qr_status": "not_found",
+        "category_suggestion": suggestion("hogar", None),
+    }
+    attempt = {"case": ypf["id"], "calls": 1, "result": stored}
+    (category_results / "attempts.jsonl").write_text(json.dumps(attempt) + "\n")
+    before = score_module.main([str(category_results)])["category_accuracy"]
+    assert before == {"cases": 1, "model": 0.0, "rules": 0.0}
+    replayed = score_module.main([str(category_results), "--replay-rules"])
+    # El modelo no cambia; las reglas actuales se reaplican sin red.
+    assert replayed["category_accuracy"] == {"cases": 1, "model": 0.0, "rules": 1.0}
+    assert "reglas 100.0%" in (category_results / "report-replay.md").read_text()
+
+
+def test_results_without_category_data_still_score_with_n_a(results):
+    metrics = score_module.main([str(results)])
+    assert metrics["category_accuracy"] == {"cases": 0, "model": None, "rules": None}
+    assert "modelo n/a, reglas n/a (0 casos)" in (results / "report.md").read_text()
+
+
+@pytest.mark.parametrize("name", ["eval-001", "eval-002"])
+def test_committed_older_results_still_score(tmp_path, name):
+    source = EVAL / "results" / name
+    for file in ("plan.json", "attempts.jsonl"):
+        (tmp_path / file).write_bytes((source / file).read_bytes())
+    for flags in ([], ["--replay-rules"]):
+        metrics = score_module.main([str(tmp_path), *flags])
+        assert metrics["category_accuracy"]["model"] is None
+        assert metrics["category_accuracy"]["rules"] is None

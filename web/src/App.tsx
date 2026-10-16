@@ -4,7 +4,7 @@ import './style.css';
 import {
   acceptedTypes, fields, labels, maxFileSize, qrStatusText, qrValue, qrReplaceable, selectOptions, statusText, issueMessages,
 } from './model';
-import type { ApiError, FieldName, Receipt, Result } from './model';
+import type { ApiError, CategorySuggestion, FieldName, Receipt, Result } from './model';
 import { ExpenseConfirm } from './ExpenseConfirm';
 
 export default function App({ onExpenseSaved }: { onExpenseSaved?: () => void } = {}) {
@@ -17,6 +17,7 @@ export default function App({ onExpenseSaved }: { onExpenseSaved?: () => void } 
   const [dirty, setDirty] = useState(false);
   const [notice, setNotice] = useState('');
   const [extracted, setExtracted] = useState<Receipt | null>(null);
+  const [extractedSuggestion, setExtractedSuggestion] = useState<CategorySuggestion | null>(null);
   const [session, setSession] = useState(0);
 
   useEffect(() => {
@@ -37,6 +38,7 @@ export default function App({ onExpenseSaved }: { onExpenseSaved?: () => void } 
     setDirty(false);
     setConsent(false);
     setExtracted(null);
+    setExtractedSuggestion(null);
     setSession(value => value + 1);
   }
 
@@ -82,6 +84,7 @@ export default function App({ onExpenseSaved }: { onExpenseSaved?: () => void } 
       });
       setResult(extracted);
       setExtracted(extracted.receipt);
+      setExtractedSuggestion(extracted.category_suggestion ?? null);
       setSession(value => value + 1);
       setDirty(false);
     } catch (cause) {
@@ -246,7 +249,7 @@ export default function App({ onExpenseSaved }: { onExpenseSaved?: () => void } 
             })}
           </div>
           <button disabled={busy} onClick={validate}>Validar correcciones</button>
-          <ExpenseConfirm key={session} file={file} result={result} extracted={extracted} disabled={busy} onSaved={() => onExpenseSaved?.()} />
+          <ExpenseConfirm key={session} file={file} result={result} extracted={extracted} extractedSuggestion={extractedSuggestion} disabled={busy} onSaved={() => onExpenseSaved?.()} />
         </section>
       )}
       </div>

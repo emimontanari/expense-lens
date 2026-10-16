@@ -135,7 +135,9 @@ def extract(monkeypatch):
                             "finish_reason": "stop",
                             "message": {
                                 "role": "assistant",
-                                "content": json.dumps(transcribed),
+                                "content": json.dumps(
+                                    {**transcribed, "category": None}
+                                ),
                             },
                         }
                     ]

@@ -23,6 +23,7 @@ RESULT = {
     "subtotal": "100,00",
     "tax": "21,00",
     "total": "121,00",
+    "category": "servicios",
 }
 NORMALIZED = {
     "issuer": "Comercio ficticio",
@@ -236,6 +237,90 @@ def test_invalid_provider_envelope_is_sanitized(requests):
     assert response.status_code == 502
     assert response.json() == {"detail": "invalid_model_output"}
     assert len(sent) == 1
+
+
+def extract_with(requests, output):
+    sent, install = requests
+
+    def handler(request):
+        sent.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps(output),
+                        },
+                    }
+                ]
+            },
+        )
+
+    install(handler)
+    with TestClient(app) as client:
+        return client.post(
+            "/receipts/extract",
+            content=(EXAMPLES / "receipt.png").read_bytes(),
+            headers=CONSENT,
+        )
+
+
+def test_extract_returns_model_and_rules_category_suggestion(requests):
+    response = extract_with(requests, {**RESULT, "issuer": "YPF Ruta 9"})
+    assert response.status_code == 200
+    assert response.json()["category_suggestion"] == {
+        "model": "servicios",
+        "rules": "combustible",
+        "suggested": "servicios",
+        "source": "model",
+    }
+
+
+def test_extract_falls_back_to_rules_when_model_has_no_category(requests):
+    response = extract_with(
+        requests, {**RESULT, "issuer": "Farmacity", "category": None}
+    )
+    assert response.json()["category_suggestion"] == {
+        "model": None,
+        "rules": "salud",
+        "suggested": "salud",
+        "source": "rules",
+    }
+
+
+@pytest.mark.parametrize("invalid", ["comida", "Servicios", 3, ["salud"], ""])
+def test_invalid_model_category_only_drops_the_suggestion(requests, invalid):
+    response = extract_with(requests, {**RESULT, "category": invalid})
+    assert response.status_code == 200
+    assert response.json()["receipt"] == NORMALIZED
+    assert response.json()["category_suggestion"] == {
+        "model": None,
+        "rules": None,
+        "suggested": None,
+        "source": None,
+    }
+
+
+def test_missing_category_key_is_invalid_model_output(requests):
+    output = {k: v for k, v in RESULT.items() if k != "category"}
+    response = extract_with(requests, output)
+    assert response.status_code == 502
+    assert response.json() == {"detail": "invalid_model_output"}
+
+
+def test_extra_key_is_still_invalid_model_output(requests):
+    response = extract_with(requests, {**RESULT, "confidence": "0.9"})
+    assert response.status_code == 502
+
+
+def test_prompt_asks_for_category_as_separate_classification():
+    assert "category" in extraction.PROMPT
+    for name in ("supermercado", "combustible", "otros"):
+        assert name in extraction.PROMPT
+    assert "Transcribe datos" in extraction.PROMPT
 
 
 def test_pdf_pages_share_one_request_and_keep_review_required(requests):
