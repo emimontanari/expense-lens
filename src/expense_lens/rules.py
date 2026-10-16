@@ -6,6 +6,7 @@ modelo o de una corrección humana. Señala; nunca corrige ni aprueba datos.
 
 from datetime import date
 
+from expense_lens.fiscal_qr import compare_with_qr
 from expense_lens.normalize import (
     normalize_amount,
     normalize_cuit,
@@ -115,6 +116,9 @@ def review_receipt(
     ]
     issues += check_rules(receipt, today or date.today())
     verified: set[FieldName] = set()
+    if fiscal_qr is not None:
+        mismatches, verified = compare_with_qr(receipt, fiscal_qr)
+        issues += [issue("qr_mismatch", field) for field in mismatches]
     return ReceiptValidation(
         receipt=receipt,
         issues=issues,

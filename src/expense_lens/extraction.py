@@ -8,6 +8,7 @@ from groq import APIConnectionError, APIStatusError, APITimeoutError, Groq
 from pydantic import ValidationError
 
 from expense_lens.documents import inspect_document
+from expense_lens.fiscal_qr import find_fiscal_qr
 from expense_lens.pdf_render import render_pdf
 from expense_lens.receipts import RawReceipt, ReceiptValidation
 from expense_lens.rules import review_receipt
@@ -57,6 +58,10 @@ def extract_document_receipt(data: bytes) -> ReceiptValidation:
     else:
         image = base64.b64encode(data).decode("ascii")
         image_urls = [f"data:image/{document.format};base64,{image}"]
+    # El QR se lee localmente, antes y con independencia de la llamada al modelo.
+    fiscal_qr, qr_status = find_fiscal_qr(
+        [base64.b64decode(url.partition(",")[2]) for url in image_urls]
+    )
     try:
         with configured_client() as client:
             completion = client.chat.completions.create(
@@ -105,4 +110,6 @@ def extract_document_receipt(data: bytes) -> ReceiptValidation:
         raw = RawReceipt.model_validate(parsed)
     except (IndexError, AttributeError, TypeError, ValueError, ValidationError) as exc:
         raise ExtractionError(502, "invalid_model_output") from exc
-    return review_receipt(raw)
+    result = review_receipt(raw, fiscal_qr)
+    result.fiscal_qr_status = qr_status
+    return result
