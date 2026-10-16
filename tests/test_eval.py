@@ -345,3 +345,24 @@ def test_scorer_report_highlights_false_verified_and_is_deterministic(results):
     assert "FALSOS VERIFICADOS: 1" in first[1]
     assert "b.total" in first[1]
     assert "http_429" in first[1]
+
+
+def test_runner_paces_cases_without_retrying(tmp_path, provider, monkeypatch):
+    calls, _ = provider
+    sleeps = []
+    monkeypatch.setattr(run_module.time, "sleep", sleeps.append)
+    out = tmp_path / "out"
+    run_module.main([str(out), "--allow-provider", "--pause-seconds", "15"])
+    assert sleeps == [15.0] * (len(CASES) - 1)
+    assert len(calls) == len(CASES)
+    plan = json.loads((out / "plan.json").read_text())
+    assert plan["pause_seconds"] == 15.0 and plan["retries"] == 0
+
+
+def test_runner_rejects_negative_pause(tmp_path, provider):
+    calls, _ = provider
+    with pytest.raises(SystemExit):
+        run_module.main(
+            [str(tmp_path / "out"), "--allow-provider", "--pause-seconds", "-1"]
+        )
+    assert calls == []

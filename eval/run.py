@@ -1,7 +1,8 @@
 """Corrida real acotada sobre el dataset sintético: una llamada por caso.
 
 Requiere --allow-provider (envía imágenes ficticias a Groq), no reintenta y nunca
-reutiliza un directorio de salida. Puntuar con eval/score.py, sin red.
+reutiliza un directorio de salida. --pause-seconds espacia los casos sin
+reintentar. Puntuar con eval/score.py, sin red.
 """
 
 import argparse
@@ -45,14 +46,18 @@ def build_plan(manifest: dict, dataset: Path) -> dict:
     }
 
 
-def run(output: Path, dataset: Path = DATASET) -> None:
+def run(output: Path, dataset: Path = DATASET, pause_seconds: float = 0.0) -> None:
     manifest = json.loads((dataset / "manifest.json").read_text())
     plan = build_plan(manifest, dataset)
+    plan["pause_seconds"] = pause_seconds
     output.mkdir(parents=True, exist_ok=False)
     original_factory = extraction.configured_client
     (output / "plan.json").write_text(json.dumps(plan, indent=2) + "\n")
     with (output / "attempts.jsonl").open("x") as attempts:
-        for case in plan["cases"]:
+        for index, case in enumerate(plan["cases"]):
+            if index and pause_seconds:
+                # Espacia llamadas para respetar el límite por minuto; no reintenta.
+                time.sleep(pause_seconds)
             captured: dict[str, Any] = {}
             calls = []
 
@@ -108,8 +113,16 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("output", type=Path)
     parser.add_argument("--allow-provider", action="store_true", required=True)
+    parser.add_argument(
+        "--pause-seconds",
+        type=float,
+        default=0.0,
+        help="Pausa entre casos para no exceder el límite del proveedor.",
+    )
     args = parser.parse_args(argv)
-    run(args.output)
+    if args.pause_seconds < 0:
+        parser.error("--pause-seconds no puede ser negativo")
+    run(args.output, pause_seconds=args.pause_seconds)
 
 
 if __name__ == "__main__":
