@@ -95,6 +95,7 @@ export default function App() {
         body: file,
       });
       setResult(extracted);
+      setDirty(false);
     } catch (cause) {
       setError((cause as Error).message);
     } finally {

@@ -35,6 +35,37 @@ describe('ExpenseLens', () => {
     expect(await screen.findByText(/límite temporal del proveedor/i)).toBeTruthy();
     expect(fetch).toHaveBeenCalledTimes(1);
   });
+  it('clears pending edits after a successful new extraction and shows its warnings', async () => {
+    const fresh = { ...result, receipt: { ...result.receipt, issuer: 'Fresh receipt' }, issues: [{ code: 'missing_field', field: 'date' }] };
+    const fetch = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => result })
+      .mockResolvedValueOnce({ ok: true, json: async () => fresh });
+    vi.stubGlobal('fetch', fetch);
+    render(<App />); chooseAndConsent();
+    fireEvent.click(screen.getByRole('button', { name: /extraer/i }));
+    fireEvent.change(await screen.findByDisplayValue('Cafe'), { target: { value: 'Edited receipt' } });
+    expect(screen.queryByText(/cambios pendientes de validar/i)).not.toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /extraer/i }));
+    expect(await screen.findByDisplayValue('Fresh receipt')).toBeTruthy();
+    expect(screen.queryByText(/cambios pendientes de validar/i)).toBeNull();
+    expect(screen.getByText('date: missing_field')).toBeTruthy();
+    expect(screen.getByText(/revisión humana requerida/i)).toBeTruthy();
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+  it('retains edited fields and pending status when a new extraction fails', async () => {
+    const fetch = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => result })
+      .mockResolvedValueOnce({ ok: false, status: 503, json: async () => ({ detail: 'provider_rate_limited' }) });
+    vi.stubGlobal('fetch', fetch);
+    render(<App />); chooseAndConsent();
+    fireEvent.click(screen.getByRole('button', { name: /extraer/i }));
+    fireEvent.change(await screen.findByDisplayValue('Cafe'), { target: { value: 'Edited receipt' } });
+    fireEvent.click(screen.getByRole('button', { name: /extraer/i }));
+    expect(await screen.findByText(/límite temporal del proveedor/i)).toBeTruthy();
+    expect(screen.getByDisplayValue('Edited receipt')).toBeTruthy();
+    expect(screen.getByText(/cambios pendientes de validar/i)).toBeTruthy();
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
   it('submits edited fields with empty nullable values as null and retains review status', async () => {
     const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => result }); vi.stubGlobal('fetch', fetch);
     render(<App />); chooseAndConsent(); fireEvent.click(screen.getByRole('button', { name: /extraer/i }));
