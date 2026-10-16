@@ -17,6 +17,8 @@ from pydantic import (
     WithJsonSchema,
 )
 
+from expense_lens.categories import Category
+
 AMOUNT_PATTERN = r"[0-9]{1,10}(\.[0-9]{1,2})?"
 
 
@@ -141,6 +143,23 @@ class FiscalQr(BaseModel):
     authorization_code: Annotated[str, StringConstraints(pattern=r"^[0-9]{14}$")]
 
 
+class CategorySuggestion(BaseModel):
+    """Sugerencia del modelo y de las reglas; `suggested` prefiere al modelo."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    model: Category | None = None
+    rules: Category | None = None
+    suggested: Category | None = None
+    source: Literal["model", "rules"] | None = None
+
+    @classmethod
+    def of(cls, model: Category | None, rules: Category | None) -> "CategorySuggestion":
+        suggested = model or rules
+        source = "model" if model else "rules" if rules else None
+        return cls(model=model, rules=rules, suggested=suggested, source=source)
+
+
 class ReceiptValidation(BaseModel):
     receipt: Receipt
     issues: list[ValidationIssue] = Field(default_factory=list)
@@ -148,6 +167,7 @@ class ReceiptValidation(BaseModel):
     movement: Literal["expense", "credit", "unknown"]
     fiscal_qr: FiscalQr | None = None
     fiscal_qr_status: Literal["found", "not_found", "invalid"] | None = None
+    category_suggestion: CategorySuggestion | None = None
     requires_human_review: Literal[True] = True
 
 

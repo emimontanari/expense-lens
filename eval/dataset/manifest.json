@@ -32,7 +32,8 @@
         },
         "fiscal_qr_status": "found",
         "flagged_fields": [],
-        "movement": "expense"
+        "movement": "expense",
+        "category": "otros"
       },
       "sha256": "8fc05deb2f4c6f02407e114b92dcbbe9d6d96d98fec18571c7bec2c167fbdba2"
     },
@@ -57,7 +58,8 @@
         "flagged_fields": [
           "total"
         ],
-        "movement": "expense"
+        "movement": "expense",
+        "category": "servicios"
       },
       "sha256": "46b7dd1c64eb3b82b6391c048c3ad76b52e71072462b870dfc5cb7640cebcbde"
     },
@@ -82,7 +84,8 @@
         "flagged_fields": [
           "subtotal"
         ],
-        "movement": "expense"
+        "movement": "expense",
+        "category": "hogar"
       },
       "sha256": "c50dc070a0b9d3a89e8b7e64c81d69b7832d6603089fd5227f0fff01bbc6f75f"
     },
@@ -105,7 +108,8 @@
         },
         "fiscal_qr_status": "not_found",
         "flagged_fields": [],
-        "movement": "expense"
+        "movement": "expense",
+        "category": "otros"
       },
       "sha256": "a846ae0a40c03d3848829135fc9279731a79d8ce3fdea7400d22ea9f6899c841"
     },
@@ -128,7 +132,8 @@
         },
         "fiscal_qr_status": "not_found",
         "flagged_fields": [],
-        "movement": "expense"
+        "movement": "expense",
+        "category": "supermercado"
       },
       "sha256": "ae5ee5b4b8c045860de21215d9b85e49efeb1c7de87186343bc6efd3c8394a83"
     },
@@ -151,7 +156,8 @@
         },
         "fiscal_qr_status": "found",
         "flagged_fields": [],
-        "movement": "credit"
+        "movement": "credit",
+        "category": "otros"
       },
       "sha256": "535ce7215b5c726769a8eb96a05ceeefd13218cf565eb43e0d466cb63d09cac4"
     },
@@ -174,7 +180,8 @@
         },
         "fiscal_qr_status": "not_found",
         "flagged_fields": [],
-        "movement": "expense"
+        "movement": "expense",
+        "category": "otros"
       },
       "sha256": "e55f6f670e1f13e8ee8911511be6e3ccdfb88ce70b8266211a4977e88b17f226"
     },
@@ -197,7 +204,8 @@
         },
         "fiscal_qr_status": "not_found",
         "flagged_fields": [],
-        "movement": "expense"
+        "movement": "expense",
+        "category": "otros"
       },
       "sha256": "a6e342d48af34cd56850c333df69b8986274d11d681742ab7e6679dd7c2d1d07"
     },
@@ -220,7 +228,8 @@
         },
         "fiscal_qr_status": "not_found",
         "flagged_fields": [],
-        "movement": "expense"
+        "movement": "expense",
+        "category": "otros"
       },
       "sha256": "88421f1df26ba6b735c2ecb002873fa38968e5ae3d72bd729848dc446f52f10c"
     },
@@ -245,7 +254,8 @@
         "flagged_fields": [
           "total"
         ],
-        "movement": "expense"
+        "movement": "expense",
+        "category": "otros"
       },
       "sha256": "e0f6f77b1d08ef83c5b31b545aa269fde202fffad7d4b0482182989c565dbe95"
     },
@@ -268,7 +278,8 @@
         },
         "fiscal_qr_status": "not_found",
         "flagged_fields": [],
-        "movement": "unknown"
+        "movement": "unknown",
+        "category": null
       },
       "sha256": "1ff645dae1540bb6ce495b419e21a9e4cfade17c6594fa36fa98dc703c574299"
     },
@@ -291,7 +302,8 @@
         },
         "fiscal_qr_status": "not_found",
         "flagged_fields": [],
-        "movement": "expense"
+        "movement": "expense",
+        "category": "restaurantes"
       },
       "sha256": "11a15fb576a8b7f5213811036e003e5e62a3e9b32dda7bf7bd1f4e1fdb1103ef"
     }

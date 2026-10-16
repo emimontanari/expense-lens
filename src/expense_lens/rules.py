@@ -6,6 +6,7 @@ modelo o de una corrección humana. Señala; nunca corrige ni aprueba datos.
 
 from datetime import date
 
+from expense_lens.categories import suggest_by_rules
 from expense_lens.fiscal_qr import compare_with_qr
 from expense_lens.normalize import (
     normalize_amount,
@@ -15,6 +16,7 @@ from expense_lens.normalize import (
 )
 from expense_lens.receipts import (
     FIELDS,
+    CategorySuggestion,
     FieldName,
     FieldStatus,
     FiscalQr,
@@ -129,6 +131,9 @@ def review_receipt(
         field_status=field_status(receipt, issues, verified),
         movement=movement_of(receipt),
         fiscal_qr=fiscal_qr,
+        category_suggestion=CategorySuggestion.of(
+            None, suggest_by_rules(receipt.issuer)
+        ),
     )
 
 

@@ -1,5 +1,6 @@
 import csv
 import io
+import sqlite3
 
 import pytest
 from fastapi.testclient import TestClient
@@ -375,6 +376,7 @@ def test_stats_correction_rates(client):
         "with_extraction": 0,
         "correction_rate_by_field": {},
         "qr_verified_rate": None,
+        "suggestion_acceptance": {"model": None, "rules": None},
     }
     extracted = client.post(
         "/receipts/validate", json={"receipt": raw_receipt()}
@@ -409,6 +411,7 @@ def test_stats_correction_rates(client):
     assert rates["currency"] == 0.0
     assert len(rates) == 10
     assert stats["qr_verified_rate"] == 0.0
+    assert stats["suggestion_acceptance"] == {"model": None, "rules": None}
 
 
 def test_db_path_comes_from_env(tmp_path, monkeypatch):
@@ -435,3 +438,144 @@ def test_duplicate_match_identifies_the_existing_expense(client):
         "total": first["receipt"]["total"],
         "currency": first["receipt"]["currency"],
     }
+
+
+def suggestion(model=None, rules=None):
+    return {
+        "model": model,
+        "rules": rules,
+        "suggested": model or rules,
+        "source": "model" if model else "rules" if rules else None,
+    }
+
+
+def test_expense_without_suggestion_keeps_it_null(client):
+    created = save(client)
+    assert created["category_suggestion"] is None
+    assert created["suggestion_accepted"] is None
+
+
+def test_suggestion_is_stored_and_acceptance_compares_with_suggested(client):
+    accepted = save(
+        client,
+        category="combustible",
+        category_suggestion=suggestion("combustible", "salud"),
+    )
+    assert accepted["category_suggestion"] == suggestion("combustible", "salud")
+    assert accepted["suggestion_accepted"] is True
+    rejected = save(
+        client,
+        receipt=raw_receipt(number="0001-00000002", total="2,00"),
+        category="hogar",
+        category_suggestion=suggestion("combustible", "salud"),
+    )
+    assert rejected["suggestion_accepted"] is False
+    assert client.get(f"/expenses/{rejected['id']}").json() == rejected
+
+
+def test_suggestion_without_any_value_is_not_an_acceptance(client):
+    created = save(client, category_suggestion=suggestion())
+    assert created["category_suggestion"] == suggestion()
+    assert created["suggestion_accepted"] is None
+
+
+def test_server_derives_suggested_and_source_from_model_and_rules(client):
+    forged = {
+        "model": None,
+        "rules": "salud",
+        "suggested": "hogar",
+        "source": "model",
+    }
+    created = save(client, category="salud", category_suggestion=forged)
+    assert created["category_suggestion"] == suggestion(None, "salud")
+    assert created["suggestion_accepted"] is True
+
+
+def test_invalid_suggestion_category_is_422(client):
+    body = payload(category_suggestion=suggestion("comida"))
+    assert client.post("/expenses", json=body).status_code == 422
+
+
+def test_update_recomputes_acceptance(client):
+    created = save(client, category_suggestion=suggestion("supermercado"))
+    assert created["suggestion_accepted"] is True
+    response = client.put(
+        f"/expenses/{created['id']}",
+        json=payload(category="otros", category_suggestion=suggestion("supermercado")),
+    )
+    assert response.json()["suggestion_accepted"] is False
+
+
+def test_stats_acceptance_per_source(client):
+    save(client, category="salud", category_suggestion=suggestion("salud", "hogar"))
+    save(
+        client,
+        receipt=raw_receipt(number="0001-00000002", total="2,00"),
+        category="hogar",
+        category_suggestion=suggestion("salud", "hogar"),
+    )
+    save(
+        client,
+        receipt=raw_receipt(number="0001-00000003", total="3,00"),
+        category="hogar",
+        category_suggestion=suggestion(None, "hogar"),
+    )
+    save(client, receipt=raw_receipt(number="0001-00000004", total="4,00"))
+    stats = client.get("/expenses/stats").json()
+    assert stats["count"] == 4
+    # Modelo: 2 gastos con sugerencia del modelo, 1 aceptada.
+    # Reglas: 3 gastos con sugerencia de reglas (hogar), 2 coinciden.
+    assert stats["suggestion_acceptance"] == {"model": 0.5, "rules": 0.6667}
+
+
+OLD_SCHEMA = """
+CREATE TABLE expenses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    category TEXT NOT NULL,
+    issuer TEXT NOT NULL,
+    issuer_cuit TEXT,
+    date TEXT NOT NULL,
+    number TEXT,
+    document_type TEXT,
+    letter TEXT,
+    currency TEXT NOT NULL,
+    subtotal TEXT,
+    tax TEXT,
+    total TEXT NOT NULL,
+    movement TEXT NOT NULL,
+    signed_total TEXT NOT NULL,
+    issues TEXT NOT NULL,
+    field_status TEXT NOT NULL,
+    fiscal_qr_verified INTEGER NOT NULL,
+    corrected_fields TEXT,
+    document_sha256 TEXT,
+    duplicate_of TEXT NOT NULL,
+    fiscal_key TEXT
+);
+"""
+
+
+def test_migration_keeps_rows_of_an_old_database_and_is_idempotent(tmp_path):
+    path = tmp_path / "old.sqlite"
+    old = sqlite3.connect(path)
+    old.executescript(OLD_SCHEMA)
+    old.execute(
+        "INSERT INTO expenses (created_at, updated_at, category, issuer, date,"
+        " currency, total, movement, signed_total, issues, field_status,"
+        " fiscal_qr_verified, duplicate_of)"
+        " VALUES ('t', 't', 'hogar', 'Easy', '2026-10-01', 'ARS', '10.00',"
+        " 'expense', '10.00', '[]', '{}', 0, '[]')"
+    )
+    old.commit()
+    old.close()
+    for _ in range(2):  # abrir dos veces: la migración es idempotente
+        conn = open_db(path)
+        columns = {r["name"] for r in conn.execute("PRAGMA table_info(expenses)")}
+        assert {"category_suggestion", "suggestion_accepted"} <= columns
+        [row] = conn.execute("SELECT * FROM expenses").fetchall()
+        assert (row["issuer"], row["category"]) == ("Easy", "hogar")
+        assert row["category_suggestion"] is None
+        assert row["suggestion_accepted"] is None
+        conn.close()

@@ -97,7 +97,7 @@ El Adapter usa `qwen/qwen3.8-27b`, listado en la [documentación de visión de G
 La cuenta respondió con ese modelo en JPEG y PDF con texto en la primera prueba.
 PNG y PDF escaneado recibieron HTTP 429, no un resultado de extracción.
 Se usa JSON mode, no una garantía de esquema: se exigen exactamente las diez
-claves de `RawReceipt` y se validan con Pydantic. El modelo **transcribe** los
+claves de `RawReceipt` más `category` (once) y se validan con Pydantic. El modelo **transcribe** los
 valores tal como aparecen (`"1.234,56"`, `"15/10/2026"`, `"$"`); normalizar,
 calcular y validar es trabajo de código determinista. Datos desconocidos quedan
 `null`; los importes no se corrigen. La revisión humana sigue siendo obligatoria.
@@ -107,6 +107,45 @@ Una solicitud realiza como máximo una llamada: sin retries ni reparación,
 (no un límite total de duración de la petición). Errores 502/503/504 no incluyen
 respuestas crudas del proveedor. Un HTTP 429 se distingue como
 `503 provider_rate_limited`, sin reintentar. Los tests usan MockTransport y clave ficticia.
+
+### Categoría sugerida (`categories.py`)
+
+Criterio único de categorías (`CATEGORY_GUIDE`), usado en el prompt del modelo y
+para etiquetar el dataset; sin definiciones escritas la métrica sería arbitraria:
+
+| Categoría | Definición |
+|---|---|
+| `supermercado` | supermercados, almacenes y autoservicios (alimentos, bebidas, limpieza e higiene para el consumo cotidiano) |
+| `combustible` | estaciones de servicio: nafta, gasoil, GNC y lubricantes |
+| `restaurantes` | comidas y bebidas consumidas fuera o por delivery: restaurantes, bares, cafeterías y parrillas |
+| `servicios` | servicios públicos y abonos del hogar: luz, gas, agua, internet, telefonía, TV y mantenimientos mensuales |
+| `transporte` | SUBE, taxi, remís, apps de viaje, peajes, estacionamiento y pasajes |
+| `salud` | farmacias, consultas médicas, prepagas y laboratorios |
+| `hogar` | ferreterías, pinturerías, muebles, electrodomésticos y reparaciones de la vivienda |
+| `otros` | todo lo demás, incluidos honorarios, consultoría, software y licencias, librería y reparaciones que no son de la vivienda |
+
+Las reglas por emisor nunca devuelven `otros`: sin coincidencia se abstienen
+(`null`), y eso cuenta como no acertado en la exactitud de la línea base.
+
+La misma llamada devuelve `category`, que **no es una transcripción** sino una
+clasificación que el prompt pide por separado: una de las ocho categorías de gasto o
+`null`. La ausencia de la clave es `502 invalid_model_output` (mismo criterio
+estricto de claves); un valor fuera de la lista invalida solo la sugerencia
+(`model: null`) y la extracción sigue siendo 200.
+
+La línea base de reglas es determinista y sin red: normaliza el emisor (minúsculas,
+sin acentos) y busca palabras completas (`dia` no coincide con `Diaz`). Palabras
+clave: combustible (ypf, shell, axion, puma), supermercado (coto, carrefour, dia,
+jumbo, disco, vea, changomas, supermercado), salud (farmacia, farmacity), servicios
+(edenor, edesur, metrogas, aysa, telecom, movistar, claro, personal), transporte
+(sube, uber, cabify, peaje, taxi, estacionamiento), restaurantes (restaurante,
+parrilla, pizzeria, cafe, bar) y hogar (easy, sodimac, ferreteria, pintureria). Sin
+coincidencia devuelve `null`; nunca sugiere `otros`.
+
+`ReceiptValidation.category_suggestion` (`null` por defecto) es
+`{model, rules, suggested, source}`; `suggested` es `model` si no es `null`, si no
+`rules`, y `source` indica cuál. `/receipts/extract` completa `model` y `rules`;
+`/receipts/validate` calcula solo `rules` (no hay modelo, `model: null`).
 
 ### PDF con texto o escaneado
 
@@ -197,15 +236,23 @@ base en un directorio temporal.
 | `PUT /expenses/{id}` | 200 `Expense`; recalcula todo y conserva `created_at` |
 | `DELETE /expenses/{id}` | 204; borrado definitivo |
 | `GET /expenses/export.csv` (mismos filtros) | CSV UTF-8 con BOM |
-| `GET /expenses/stats` | `{count, with_extraction, correction_rate_by_field, qr_verified_rate}` |
+| `GET /expenses/stats` | `{count, with_extraction, correction_rate_by_field, qr_verified_rate, suggestion_acceptance}` |
 
 El cuerpo de `POST` y `PUT` es `{receipt, fiscal_qr, category, extracted,
-document_sha256, allow_duplicate}`. Categorías: `supermercado`, `combustible`,
+document_sha256, allow_duplicate, category_suggestion}`. Categorías: `supermercado`, `combustible`,
 `restaurantes`, `servicios`, `transporte`, `salud`, `hogar`, `otros`.
 `extracted` es la salida normalizada original de `/receipts/extract` (o `null` si
 se cargó a mano). El modelo rechaza campos extra: **el cliente no puede enviar
 estados**; el servidor vuelve a ejecutar `review_receipt` y calcula `issues`,
 `field_status` y `movement`.
+
+`category_suggestion` es opcional (`null` por defecto): la sugerencia que la
+interfaz mostró. El servidor deriva `suggested` y `source` de `model` y `rules`. El
+`Expense` devuelto incluye `category_suggestion` y `suggestion_accepted`
+(`category == suggested`; `null` si no hubo sugerencia o ninguna fuente opinó). Las
+columnas nuevas (`category_suggestion` JSON y `suggestion_accepted`) se agregan a
+bases existentes con una migración idempotente (`ALTER TABLE` si faltan) que
+conserva los datos.
 
 ### Errores
 
@@ -234,6 +281,9 @@ En `PUT` el propio registro se excluye de la comparación.
   `extracted` (`null` si no hubo extracción). `/expenses/stats` calcula la tasa de
   corrección por campo sobre los gastos con extracción y la tasa de gastos con algún
   campo `verified` por el QR fiscal sobre todos los gastos.
+- `suggestion_acceptance` es `{model, rules}`: para cada fuente, la fracción de
+  gastos con sugerencia de esa fuente cuya categoría guardada coincide con ella
+  (`null` si ninguno la tuvo).
 - Los filtros por texto e importe se aplican en Python con `Decimal`, pensando en
   un uso local de un solo usuario; no hay autenticación ni paginación.
 

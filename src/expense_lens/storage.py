@@ -35,12 +35,27 @@ CREATE TABLE IF NOT EXISTS expenses (
     corrected_fields TEXT,
     document_sha256 TEXT,
     duplicate_of TEXT NOT NULL,
-    fiscal_key TEXT
+    fiscal_key TEXT,
+    category_suggestion TEXT,
+    suggestion_accepted INTEGER
 );
 CREATE INDEX IF NOT EXISTS expenses_date ON expenses (date);
 CREATE INDEX IF NOT EXISTS expenses_sha ON expenses (document_sha256);
 CREATE INDEX IF NOT EXISTS expenses_fiscal_key ON expenses (fiscal_key);
 """
+# Columnas agregadas después de la primera versión del esquema.
+MIGRATIONS = (
+    ("category_suggestion", "TEXT"),
+    ("suggestion_accepted", "INTEGER"),
+)
+
+
+def migrate(conn: sqlite3.Connection) -> None:
+    """Agrega columnas faltantes sin tocar los datos existentes (idempotente)."""
+    present = {row[1] for row in conn.execute("PRAGMA table_info(expenses)")}
+    for column, kind in MIGRATIONS:
+        if column not in present:
+            conn.execute(f"ALTER TABLE expenses ADD COLUMN {column} {kind}")
 
 
 def db_path() -> Path:
@@ -53,6 +68,7 @@ def open_db(path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(path, isolation_level=None, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
+    migrate(conn)
     return conn
 
 
@@ -83,12 +99,14 @@ INSERT INTO expenses (
     created_at, updated_at, category, issuer, issuer_cuit, date, number,
     document_type, letter, currency, subtotal, tax, total, movement,
     signed_total, issues, field_status, fiscal_qr_verified, corrected_fields,
-    document_sha256, duplicate_of, fiscal_key
+    document_sha256, duplicate_of, fiscal_key, category_suggestion,
+    suggestion_accepted
 ) VALUES (
     :created_at, :updated_at, :category, :issuer, :issuer_cuit, :date, :number,
     :document_type, :letter, :currency, :subtotal, :tax, :total, :movement,
     :signed_total, :issues, :field_status, :fiscal_qr_verified, :corrected_fields,
-    :document_sha256, :duplicate_of, :fiscal_key
+    :document_sha256, :duplicate_of, :fiscal_key, :category_suggestion,
+    :suggestion_accepted
 )
 """
 
@@ -101,7 +119,9 @@ UPDATE expenses SET
     signed_total = :signed_total, issues = :issues, field_status = :field_status,
     fiscal_qr_verified = :fiscal_qr_verified,
     corrected_fields = :corrected_fields, document_sha256 = :document_sha256,
-    duplicate_of = :duplicate_of, fiscal_key = :fiscal_key
+    duplicate_of = :duplicate_of, fiscal_key = :fiscal_key,
+    category_suggestion = :category_suggestion,
+    suggestion_accepted = :suggestion_accepted
 WHERE id = :id
 """
 
