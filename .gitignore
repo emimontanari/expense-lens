@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+dist/
+*.egg-info/
+.env
+.env.*
+!.env.example
+.DS_Store
+.atl/
+# Comprobantes y bases locales: no publicar información sensible.
+data/
+*.sqlite
+*.sqlite3

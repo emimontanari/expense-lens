@@ -1,0 +1,22 @@
+{
+  "model": "qwen/qwen3.8-27b",
+  "max_calls": 4,
+  "retries": 0,
+  "prompt_sha256": "a6adbf38f0abfce656b24f61f17f0eb4d95aedbb20d1d2e05567d292ee6ab21d",
+  "inputs": {
+    "receipt.png": "4052e287f7182767fde4d18b9f5363f5f4c1d956277e9326966826e00354cb24",
+    "receipt.jpg": "f877f46f029b6fefe3a881226de7789883733c3413ce52f8ef0dea510c903d5d",
+    "receipt-text.pdf": "012e0a74735162dfb83747cf060456a3d5330ac1de4aaf6f3b4645c72302aa13",
+    "receipt-scanned.pdf": "b52fe47736eb7b9cc0e7fa47c6b02296d7b8c6b98f69dc285b339f379837d9f5"
+  },
+  "expected": {
+    "issuer": "Comercio ficticio",
+    "date": "2026-10-15",
+    "number": "0001-00000001",
+    "currency": "ARS",
+    "subtotal": "100.00",
+    "tax": "21.00",
+    "total": "121.00"
+  },
+  "limits": "Mismo recibo en cuatro formatos; no mide generalizaci\u00f3n."
+}
