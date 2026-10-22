@@ -36,6 +36,7 @@ La respuesta incluye `receipt` normalizado (`"1210.00"`, `"2026-10-15"`,
 |---|---|---|
 | `1.234,56`, `$ 1.234,56`, `1,234.56` | `1234.56` | El último separador con 1–2 dígitos es el decimal. |
 | `1.234` o `1,234` | `null` + `ambiguous_amount` | Un solo grupo de tres dígitos puede ser miles o decimales: no se adivina. |
+| `1.234` con otros importes como `1.000,00` | `1234` + `amount_interpreted_from_document` (info) | El propio comprobante muestra que la coma es su decimal, así que el punto es de miles. Solo cuenta la evidencia inequívoca y coherente: si los importes mezclan estilos, no hay evidencia. |
 | `-150,00`, `(150,00)` | `150.00` | Importes absolutos; el signo lo da el tipo de comprobante. |
 | `15/10/2026` | `2026-10-15` | Día primero, formato argentino. |
 | `$` | `ARS` + `currency_inferred_from_symbol` (info) | En Argentina `$` es pesos, pero se informa la inferencia. |
@@ -56,6 +57,7 @@ La respuesta incluye `receipt` normalizado (`"1210.00"`, `"2026-10-15"`,
 | `qr_mismatch` | El campo contradice el QR fiscal. | warning |
 | `credit_note` | Nota de crédito: `movement = credit`, resta en lugar de sumar. | info |
 | `foreign_currency` | USD o EUR: se conserva la moneda original. | info |
+| `amount_interpreted_from_document` | Un importe ambiguo se resolvió con el estilo decimal del resto del comprobante. | info |
 
 `field_status` resume cada campo: `verified` (coincide con el QR), `conflict`,
 `missing`, `unverified` (leído por el modelo, sin segunda fuente) o `empty`.

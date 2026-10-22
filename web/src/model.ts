@@ -72,6 +72,7 @@ export const qrReplaceable: FieldStatus[] = ['conflict', 'missing', 'empty'];
 export const issueMessages: Record<string, string> = {
   missing_field: 'Falta este dato en el comprobante.',
   ambiguous_amount: 'El importe es ambiguo; no se adivinó. Escríbelo a mano.',
+  amount_interpreted_from_document: 'Importe interpretado con el formato del resto del comprobante (por ejemplo, "1.234" como 1234). Confírmalo.',
   unparseable_amount: 'No se pudo interpretar el importe.',
   invalid_date: 'La fecha no es válida.',
   unknown_currency: 'La moneda no se reconoce.',

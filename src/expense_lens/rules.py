@@ -9,6 +9,7 @@ from datetime import date
 from expense_lens.categories import suggest_by_rules
 from expense_lens.fiscal_qr import compare_with_qr
 from expense_lens.normalize import (
+    decimal_separator,
     normalize_amount,
     normalize_cuit,
     normalize_currency,
@@ -31,6 +32,7 @@ BASE_REQUIRED: tuple[FieldName, ...] = ("issuer", "date", "currency", "total")
 FISCAL_REQUIRED: tuple[FieldName, ...] = ("issuer_cuit", "number", "letter")
 FISCAL_TYPES = {"factura", "nota_credito", "nota_debito"}
 INFO_CODES: set[IssueCode] = {
+    "amount_interpreted_from_document",
     "credit_note",
     "foreign_currency",
     "currency_inferred_from_symbol",
@@ -56,6 +58,13 @@ def normalize_receipt(raw: RawReceipt) -> tuple[Receipt, list[ValidationIssue]]:
             issues.append(issue(code, field))
         return value
 
+    # Evidencia del propio documento: si todos los importes inequívocos usan el
+    # mismo separador decimal, ese es el estilo del comprobante.
+    styles = {
+        decimal_separator(value) for value in (raw.subtotal, raw.tax, raw.total)
+    } - {None}
+    hint = styles.pop() if len(styles) == 1 else None
+
     receipt = Receipt.model_validate(
         {
             "issuer": (raw.issuer or "").strip() or None,
@@ -65,9 +74,9 @@ def normalize_receipt(raw: RawReceipt) -> tuple[Receipt, list[ValidationIssue]]:
             "document_type": raw.document_type,
             "letter": raw.letter,
             "currency": keep("currency", normalize_currency(raw.currency)),
-            "subtotal": keep("subtotal", normalize_amount(raw.subtotal)),
-            "tax": keep("tax", normalize_amount(raw.tax)),
-            "total": keep("total", normalize_amount(raw.total)),
+            "subtotal": keep("subtotal", normalize_amount(raw.subtotal, hint)),
+            "tax": keep("tax", normalize_amount(raw.tax, hint)),
+            "total": keep("total", normalize_amount(raw.total, hint)),
         }
     )
     return receipt, issues
