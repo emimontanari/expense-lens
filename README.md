@@ -65,6 +65,9 @@ lógica de negocio (`normalize.py`, `rules.py`, `fiscal_qr.py`) no lo conoce.
 - **El documento es dato no confiable.** Instrucciones escritas en la imagen se
   ignoran, y el QR también se valida estrictamente (host oficial, versión,
   dígito verificador del CUIT). Hay un caso de inyección en el dataset.
+- **El QR devuelto al cliente lleva firma HMAC.** El servidor rechaza QR sin
+  firma o alterados antes de marcarlos verificados; `EXPENSE_LENS_SECRET` debe
+  ser estable para que sobrevivan reinicios.
 - **Fallar visible y acotado.** Una llamada por solicitud, sin reintentos;
   un HTTP 429 se informa como tal. El modelo nunca es la única defensa.
 - **Las correcciones humanas son datos.** Cada gasto guarda qué campos cambió
@@ -191,7 +194,7 @@ Desde esta carpeta:
 
 ```bash
 uv sync --locked
-uv run --env-file .env uvicorn expense_lens.main:app --reload --host 127.0.0.1
+EXPENSE_LENS_SECRET='secreto-aleatorio-largo-y-estable' uv run --env-file .env uvicorn expense_lens.main:app --reload --host 127.0.0.1
 ```
 
 - Salud: <http://127.0.0.1:8000/health>
@@ -226,7 +229,7 @@ El arranque anterior deja la extracción deshabilitada. Para habilitarla
 explícitamente, reemplazá el comando del servidor por:
 
 ```bash
-EXPENSE_LENS_ENABLE_GROQ=1 uv run --env-file .env uvicorn expense_lens.main:app --reload --host 127.0.0.1
+EXPENSE_LENS_SECRET='secreto-aleatorio-largo-y-estable' EXPENSE_LENS_ENABLE_GROQ=1 uv run --env-file .env uvicorn expense_lens.main:app --reload --host 127.0.0.1
 ```
 
 Cada extracción autorizada puede consumir cuota del proveedor. El consentimiento

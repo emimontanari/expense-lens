@@ -166,6 +166,7 @@ class ReceiptValidation(BaseModel):
     field_status: dict[FieldName, FieldStatus]
     movement: Literal["expense", "credit", "unknown"]
     fiscal_qr: FiscalQr | None = None
+    fiscal_qr_signature: str | None = None
     fiscal_qr_status: Literal["found", "not_found", "invalid"] | None = None
     category_suggestion: CategorySuggestion | None = None
     requires_human_review: Literal[True] = True
@@ -176,3 +177,4 @@ class ValidationRequest(BaseModel):
 
     receipt: RawReceipt
     fiscal_qr: FiscalQr | None = None
+    fiscal_qr_signature: str | None = None

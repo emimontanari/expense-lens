@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, StringConstraints
 
 from expense_lens import storage
 from expense_lens.categories import Category
+from expense_lens.qr_signature import verify_qr
 from expense_lens.receipts import (
     FIELDS,
     CategorySuggestion,
@@ -44,6 +45,7 @@ class ExpenseInput(BaseModel):
 
     receipt: RawReceipt
     fiscal_qr: FiscalQr | None = None
+    fiscal_qr_signature: str | None = None
     category: Category
     extracted: Receipt | None = None
     document_sha256: Sha256 | None = None
@@ -203,6 +205,12 @@ def persist(
     conn: sqlite3.Connection, body: ExpenseInput, expense_id: int | None
 ) -> sqlite3.Row:
     """Revalida, comprueba duplicados y guarda (alta si no hay `expense_id`)."""
+    if body.fiscal_qr is not None and not verify_qr(
+        body.fiscal_qr, body.fiscal_qr_signature
+    ):
+        raise HTTPException(
+            status_code=422, detail={"code": "fiscal_qr_signature_invalid"}
+        )
     if expense_id is not None and storage.get(conn, expense_id) is None:
         raise HTTPException(status_code=404, detail="expense_not_found")
     review = review_receipt(body.receipt, body.fiscal_qr)

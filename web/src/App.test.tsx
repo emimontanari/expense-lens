@@ -87,7 +87,7 @@ describe('ExpenseLens', () => {
       receipt: { issuer: 'Cafe', issuer_cuit: null, date: '2026-10-14', number: null, document_type: 'factura', letter: 'A', currency: 'ARS', subtotal: '1000.00', tax: '210.00', total: '1200.00' },
       issues: [{ code: 'qr_mismatch', field: 'total', severity: 'warning' }, { code: 'foreign_currency', field: 'currency', severity: 'info' }],
       field_status: { issuer: 'unverified', issuer_cuit: 'empty', date: 'verified', number: 'missing', document_type: 'verified', letter: 'verified', currency: 'verified', subtotal: 'unverified', tax: 'unverified', total: 'conflict' },
-      movement: 'credit', fiscal_qr: qr, fiscal_qr_status: 'found', requires_human_review: true,
+      movement: 'credit', fiscal_qr: qr, fiscal_qr_signature: 'a'.repeat(64), fiscal_qr_status: 'found', requires_human_review: true,
     };
     async function extractRich() {
       const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => rich }); vi.stubGlobal('fetch', fetch);
@@ -147,8 +147,14 @@ describe('ExpenseLens', () => {
       fetch.mockResolvedValueOnce({ ok: true, json: async () => ({ ...rich, issues: [], fiscal_qr_status: 'invalid', fiscal_qr: null }) });
       fireEvent.click(screen.getByRole('button', { name: /validar correcciones/i }));
       await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
-      expect(JSON.parse(fetch.mock.calls[1][1].body)).toMatchObject({ receipt: { issuer: 'Cafe' }, fiscal_qr: { authorization_code: '70123456789012' } });
+      expect(JSON.parse(fetch.mock.calls[1][1].body)).toMatchObject({ receipt: { issuer: 'Cafe' }, fiscal_qr: { authorization_code: '70123456789012' }, fiscal_qr_signature: 'a'.repeat(64) });
       expect(await screen.findByText(/no es un QR fiscal válido/i)).toBeTruthy();
+    });
+    it('asks to extract again when the server rejects the QR signature', async () => {
+      const fetch = await extractRich();
+      fetch.mockResolvedValueOnce({ ok: false, status: 422, json: async () => ({ detail: { code: 'fiscal_qr_signature_invalid' } }) });
+      fireEvent.click(screen.getByRole('button', { name: /validar correcciones/i }));
+      expect(await screen.findByText(/no se pudo comprobar el qr fiscal.*vuelve a extraer/i)).toBeTruthy();
     });
   });
 });

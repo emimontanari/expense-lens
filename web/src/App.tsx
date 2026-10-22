@@ -57,6 +57,9 @@ export default function App({ onExpenseSaved }: { onExpenseSaved?: () => void } 
       if (response.status === 503 && code === 'provider_rate_limited') {
         throw new Error('Límite temporal del proveedor de extracción. Inténtalo más tarde; no se reintentó.');
       }
+      if (code === 'fiscal_qr_signature_invalid') {
+        throw new Error('No se pudo comprobar el QR fiscal (por ejemplo, porque el servidor se reinició). Vuelve a extraer el comprobante.');
+      }
       if (code === 'groq_disabled' || code === 'groq_not_configured') {
         throw new Error('La extracción automática no está habilitada o configurada en el servidor.');
       }
@@ -103,7 +106,7 @@ export default function App({ onExpenseSaved }: { onExpenseSaved?: () => void } 
       const validated = await request('/receipts/validate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ receipt: result.receipt, fiscal_qr: result.fiscal_qr ?? null }),
+        body: JSON.stringify({ receipt: result.receipt, fiscal_qr: result.fiscal_qr ?? null, fiscal_qr_signature: result.fiscal_qr_signature ?? null }),
       });
       setResult(validated);
       setDirty(false);

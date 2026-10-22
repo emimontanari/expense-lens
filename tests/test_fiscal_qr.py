@@ -12,6 +12,7 @@ from PIL import Image
 from expense_lens import extraction
 from expense_lens.fiscal_qr import find_fiscal_qr, parse_fiscal_qr
 from expense_lens.main import app
+from expense_lens.qr_signature import sign_qr
 
 # Ejemplo de la especificación oficial (moneda cambiada a pesos).
 QR_DATA = {
@@ -85,12 +86,14 @@ def test_parses_official_example_into_normalized_fields():
 )
 def test_maps_receipt_type_codes(code, document_type, letter):
     qr = parse_fiscal_qr(qr_url({**QR_DATA, "tipoCmp": code}))
+    assert qr is not None
     assert (qr.document_type, qr.letter) == (document_type, letter)
 
 
 def test_accepts_arca_host_and_dollar_amounts_without_conversion():
     data = {**QR_DATA, "moneda": "DOL", "ctz": 65, "importe": 121.5}
     qr = parse_fiscal_qr(qr_url(data, host="www.arca.gob.ar"))
+    assert qr is not None
     assert (qr.currency, str(qr.total), qr.exchange_rate) == ("USD", "121.5", "65")
 
 
@@ -198,13 +201,53 @@ def test_without_qr_nothing_is_verified(extract):
 
 
 def test_validate_rechecks_corrections_against_returned_qr():
-    qr = parse_fiscal_qr(qr_url()).model_dump(mode="json")
+    parsed_qr = parse_fiscal_qr(qr_url())
+    assert parsed_qr is not None
+    qr = parsed_qr.model_dump(mode="json")
     with TestClient(app) as client:
         response = client.post(
             "/receipts/validate",
-            json={"receipt": {**TRANSCRIBED, "total": "12.100"}, "fiscal_qr": qr},
+            json={
+                "receipt": {**TRANSCRIBED, "total": "12.100"},
+                "fiscal_qr": qr,
+                "fiscal_qr_signature": sign_qr(parsed_qr),
+            },
         )
     assert response.status_code == 200
     result = response.json()
     assert result["field_status"]["total"] == "conflict"
     assert result["field_status"]["date"] == "verified"
+
+
+def test_signed_qr_round_trip_keeps_fields_verified_when_saved(extract, tmp_path):
+    """Extraer firma el QR; validar y guardar con esa firma conserva 'verified'."""
+    from expense_lens import storage
+    from expense_lens.expenses import get_db
+
+    result = extract(receipt_image(qr_url()), TRANSCRIBED)
+    qr, signature = result["fiscal_qr"], result["fiscal_qr_signature"]
+    assert signature == sign_qr(parse_fiscal_qr(qr_url()))
+
+    def override():
+        conn = storage.open_db(tmp_path / "expenses.sqlite")
+        try:
+            yield conn
+        finally:
+            conn.close()
+
+    app.dependency_overrides[get_db] = override
+    try:
+        with TestClient(app) as client:
+            body = {
+                "receipt": TRANSCRIBED,
+                "fiscal_qr": qr,
+                "fiscal_qr_signature": signature,
+            }
+            validated = client.post("/receipts/validate", json=body).json()
+            assert validated["fiscal_qr_signature"] == signature
+            assert validated["field_status"]["total"] == "verified"
+            saved = client.post("/expenses", json={**body, "category": "otros"})
+            assert saved.status_code == 201, saved.text
+            assert saved.json()["fiscal_qr_verified"] is True
+    finally:
+        app.dependency_overrides.clear()

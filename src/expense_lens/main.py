@@ -12,6 +12,7 @@ from expense_lens.documents import (
 )
 from expense_lens.expenses import router as expenses_router
 from expense_lens.extraction import ExtractionError, extract_document_receipt
+from expense_lens.qr_signature import verify_qr
 from expense_lens.receipts import ReceiptValidation, ValidationRequest
 from expense_lens.rules import review_receipt
 
@@ -39,7 +40,15 @@ def health() -> HealthResponse:
 @app.post("/receipts/validate", response_model=ReceiptValidation, tags=["receipts"])
 def check_receipt(body: ValidationRequest) -> ReceiptValidation:
     """Normaliza y valida correcciones humanas sin guardarlas ni aprobarlas."""
-    return review_receipt(body.receipt, body.fiscal_qr)
+    if body.fiscal_qr is not None and not verify_qr(
+        body.fiscal_qr, body.fiscal_qr_signature
+    ):
+        raise HTTPException(
+            status_code=422, detail={"code": "fiscal_qr_signature_invalid"}
+        )
+    result = review_receipt(body.receipt, body.fiscal_qr)
+    result.fiscal_qr_signature = body.fiscal_qr_signature
+    return result
 
 
 async def read_document_bytes(request: Request) -> bytes:

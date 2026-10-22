@@ -11,6 +11,7 @@ from expense_lens.categories import CATEGORIES, CATEGORY_GUIDE
 from expense_lens.documents import inspect_document
 from expense_lens.fiscal_qr import find_fiscal_qr
 from expense_lens.pdf_render import render_pdf
+from expense_lens.qr_signature import sign_qr
 from expense_lens.receipts import CategorySuggestion, RawReceipt, ReceiptValidation
 from expense_lens.rules import review_receipt
 
@@ -123,6 +124,8 @@ def extract_document_receipt(data: bytes) -> ReceiptValidation:
     except (IndexError, AttributeError, TypeError, ValueError, ValidationError) as exc:
         raise ExtractionError(502, "invalid_model_output") from exc
     result = review_receipt(raw, fiscal_qr)
+    if fiscal_qr is not None:
+        result.fiscal_qr_signature = sign_qr(fiscal_qr)
     # Un valor fuera de la lista invalida solo la sugerencia, no la extracción.
     model_category = category if category in CATEGORIES else None
     assert result.category_suggestion is not None

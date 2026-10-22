@@ -32,6 +32,7 @@ export function ExpenseConfirm({ file, result, extracted, extractedSuggestion = 
       await saveExpense({
         receipt: result.receipt,
         fiscal_qr: result.fiscal_qr ?? null,
+        fiscal_qr_signature: result.fiscal_qr_signature ?? null,
         category,
         extracted,
         document_sha256: file ? await sha256Hex(file) : null,
@@ -45,6 +46,8 @@ export function ExpenseConfirm({ file, result, extracted, extractedSuggestion = 
         setMatches(cause.matches);
       } else if (cause instanceof ExpenseApiError && cause.status === 422 && cause.code === 'incomplete_expense') {
         setMissing(cause.fields);
+      } else if (cause instanceof ExpenseApiError && cause.status === 422 && cause.code === 'fiscal_qr_signature_invalid') {
+        setError('No se pudo comprobar el QR fiscal (por ejemplo, porque el servidor se reinició). Vuelve a extraer el comprobante.');
       } else {
         setError((cause as Error).message);
       }
