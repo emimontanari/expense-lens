@@ -564,10 +564,10 @@ def build_cases() -> list[dict]:
                 "document_type": "factura",
                 "letter": "C",
                 "currency": "ARS",
+                "total": "1234",
             },
             "otros",
-            flagged=["total"],
-            note='"1.234" puede ser 1234 o 1,234: la verdad es null, no se adivina.',
+            note='"1.234" en un comprobante en pesos son miles: 1234, con aviso.',
         )
     )
 

@@ -220,8 +220,14 @@ def replay_rules(attempts: list[dict]) -> list[dict]:
             replayed.append(attempt)
             continue
         old = attempt["result"]
+        # Preferir la transcripción cruda: el resultado guardado ya perdió los
+        # valores que las reglas viejas dejaron en null (como "1.234").
+        source = attempt.get("model_output") or old["receipt"]
         raw = RawReceipt.model_validate(
-            {k: None if v is None else str(v) for k, v in old["receipt"].items()}
+            {
+                k: None if source.get(k) is None else str(source[k])
+                for k in RawReceipt.model_fields
+            }
         )
         qr = FiscalQr.model_validate(old["fiscal_qr"]) if old["fiscal_qr"] else None
         result = review_receipt(raw, qr)
