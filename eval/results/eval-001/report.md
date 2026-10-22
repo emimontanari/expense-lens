@@ -1,21 +1,21 @@
-# Reporte de evaluación
+# Evaluation report
 
-Modelo: `qwen/qwen3.8-27b`. Dataset sintético ficticio.
+Model: `qwen/qwen3.8-27b`. Synthetic fictional dataset. Report prose translated; underlying raw evidence is unchanged.
 
-> Falsos verificados: 0
+> False verified fields: 0
 
-- Casos evaluados: 2 de 12
-- Fallos del proveedor o salida inválida (no cuentan como acierto): 10 {'http_429': 10}
-- Exactitud global por campo: 100.0%
-- Campos inventados: 0 (tasa 0.0%)
-- Recall de detección (erróneos en conflict/missing): n/a de 0
-- Recall de campos marcados esperados: 100.0%
-- Tasa de revisión (casos con campo no confiable): 50.0%
-- Estado del QR fiscal correcto: 100.0%
-- Latencia (s): media 0.408, mediana 0.236, máx 1.349
-- Tokens: 4360 de entrada y 286 de salida (10 intentos sin uso informado)
+- Cases evaluated: 2 of 12
+- Provider failures or invalid output (not counted as correct): 10 {'http_429': 10}
+- Overall field accuracy: 100.0%
+- Invented fields: 0 (rate 0.0%)
+- Detection recall (incorrect fields marked conflict/missing): n/a of 0
+- Expected-field marking recall: 100.0%
+- Review rate (cases with an untrusted field): 50.0%
+- Fiscal QR status accuracy: 100.0%
+- Latency (s): mean 0.408, median 0.236, max 1.349
+- Tokens: 4360 input and 286 output (10 attempts with no usage reported)
 
-| Campo | Exactitud |
+| Field | Accuracy |
 |---|---|
 | issuer | 100.0% |
 | issuer_cuit | 100.0% |
@@ -28,4 +28,4 @@ Modelo: `qwen/qwen3.8-27b`. Dataset sintético ficticio.
 | tax | 100.0% |
 | total | 100.0% |
 
-Muestra pequeña y sintética: no es una estimación para facturas reales.
+Small synthetic sample: this is not an estimate for real invoices.

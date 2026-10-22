@@ -1,223 +1,238 @@
 # ExpenseLens
 
-**Convierte tickets y facturas argentinas en gastos verificables.** La IA lee el
-comprobante, el código normaliza y valida, el QR fiscal de ARCA lo contrasta y
-una persona confirma. Ningún dato se acepta solo porque lo dijo un modelo.
+**A local prototype for reviewing Argentine receipts and invoices.** AI can read
+the document with consent, code normalizes and validates it, the fiscal QR adds
+independent evidence, and a person confirms the result. No data is accepted just
+because a model said so.
 
-> La IA interpreta; el código calcula; la persona aprueba.
+## Status and demo
 
-## El problema
+ExpenseLens is complete as a local, single-user portfolio project. It is not
+production-ready and must not be exposed publicly: it lacks authentication,
+multitenant isolation, and a complete sandbox. The reproducible demo is in
+[docs/demo.md](docs/demo.md). It uses synthetic files; extraction requires
+consent and may call the external provider when enabled.
 
-Cargar gastos a mano es lento y propenso a errores: importes con `1.234,56`,
-facturas A/B/C con y sin IVA discriminado, notas de crédito que restan, pagos en
-dólares, subtotales confundidos con totales. Un OCR genérico lee texto; no sabe
-cuándo **no** confiar en lo que leyó.
+> AI interprets; code computes; a person approves.
 
-## Qué hace
+## The problem
 
-1. **Carga** un JPEG, PNG o PDF (hasta 3 páginas) con vista previa.
-2. **Lee el QR fiscal localmente**, antes de enviar nada afuera.
-3. **Transcribe** con un modelo multimodal (Groq), solo con consentimiento explícito.
-4. **Normaliza** formatos argentinos con código determinista.
-5. **Valida** con reglas fiscales y aritméticas, y contrasta contra el QR.
-6. **Muestra el estado de cada campo** para que la persona revise y corrija.
-7. **Sugiere la categoría** (IA y reglas), medida contra lo que elige la persona.
-8. **Guarda el gasto** solo cuando la persona confirma, frena duplicados y arma
-   el historial con filtros, totales por moneda y exportación CSV.
+Entering expenses manually is slow and error-prone: amounts such as `1.234,56`,
+A/B/C invoices with and without itemized VAT, credit notes that subtract, payments
+in dollars, and subtotals confused with totals. Generic OCR reads text; it does
+not know when **not** to trust what it read.
 
-| Estado del campo | Significado |
+## What it does
+
+1. **Upload** a JPEG, PNG, or PDF (up to 3 pages) with a preview.
+2. **Read the fiscal QR locally**, before sending anything externally.
+3. **Transcribe** with a multimodal model (Groq), only with explicit consent.
+4. **Normalize** Argentine formats with deterministic code.
+5. **Validate** with tax and arithmetic rules, and compare against the QR.
+6. **Show each field’s status** so a person can review and correct it.
+7. **Suggest a category** (AI and rules), measured against the person’s choice.
+8. **Save the expense** only after confirmation, block duplicates, and provide
+   filtered history, totals by currency, and CSV export.
+
+| Field status | Meaning |
 |---|---|
-| Verificado por QR | Coincide con el QR fiscal: dos fuentes independientes de acuerdo. |
-| Revisar | Una regla o el QR lo contradicen. |
-| Faltante | El tipo de comprobante lo requiere y no se leyó. |
-| Sin verificar | Lo leyó el modelo, sin segunda fuente. |
+| “Verificado por QR” (“Verified by QR”) | Matches the fiscal QR: two independent sources agree. |
+| “Revisar” (“Review”) | A rule or the QR contradicts it. |
+| “Faltante” (“Missing”) | Required by the document type but not read. |
+| “Sin verificar” (“Unverified”) | Read by the model, with no second source. |
 
-## Arquitectura
+## Architecture
 
 ```mermaid
 flowchart LR
-    A[Archivo] --> B[Inspección<br/>límites y formato]
-    B --> C[QR fiscal ARCA<br/>local, zxing-cpp]
-    B --> D[Modelo multimodal<br/>transcribe, no calcula]
-    D --> E[Normalización<br/>1.234,56 · 15/10/2026 · CUIT]
-    E --> F[Reglas argentinas<br/>IVA, NC, moneda, totales]
+    A[File] --> B[Inspection<br/>limits and format]
+    B --> C[ARCA fiscal QR<br/>local, zxing-cpp]
+    B --> D[Multimodal model<br/>transcribes, does not calculate]
+    D --> E[Normalization<br/>1.234,56 · 15/10/2026 · CUIT]
+    E --> F[Argentine rules<br/>VAT, credit notes, currency, totals]
     C --> F
-    F --> G[Estado por campo]
-    G --> H[Revisión humana]
-    H -->|correcciones| E
+    F --> G[Per-field status]
+    G --> H[Human review]
+    H -->|corrections| E
 ```
 
-El mismo pipeline determinista procesa la salida del modelo y las correcciones
-de la persona: `POST /receipts/validate` vuelve a normalizar, validar y contrastar
-con el QR. El proveedor de IA es un Adapter reemplazable (`extraction.py`); la
-lógica de negocio (`normalize.py`, `rules.py`, `fiscal_qr.py`) no lo conoce.
+The same deterministic pipeline processes model output and human corrections:
+`POST /receipts/validate` normalizes, validates, and compares against the QR again.
+The AI provider is a replaceable Adapter (`extraction.py`); the business logic
+(`normalize.py`, `rules.py`, `fiscal_qr.py`) does not depend on it.
 
-## Decisiones de AI engineering
+## AI engineering decisions
 
-- **El modelo transcribe, el código decide.** El prompt pide copiar `"1.234,56"`
-  tal como aparece. Convertirlo es trabajo de código testeado, no de un LLM que
-  puede confundir separadores o "corregir" una suma.
-- **Confianza por contraste, no por autoevaluación.** No se le pregunta al
-  modelo qué tan seguro está. Un campo es confiable cuando una fuente
-  independiente (el QR fiscal) coincide; si no, queda "sin verificar".
-- **Ante ambigüedad, `null`.** `1.234` puede ser mil doscientos treinta y cuatro
-  o uno con decimales: se marca para revisión en lugar de adivinar.
-- **El documento es dato no confiable.** Instrucciones escritas en la imagen se
-  ignoran, y el QR también se valida estrictamente (host oficial, versión,
-  dígito verificador del CUIT). Hay un caso de inyección en el dataset.
-- **El QR devuelto al cliente lleva firma HMAC.** El servidor rechaza QR sin
-  firma o alterados antes de marcarlos verificados; `EXPENSE_LENS_SECRET` debe
-  ser estable para que sobrevivan reinicios.
-- **Fallar visible y acotado.** Una llamada por solicitud, sin reintentos;
-  un HTTP 429 se informa como tal. El modelo nunca es la única defensa.
-- **Las correcciones humanas son datos.** Cada gasto guarda qué campos cambió
-  la persona respecto de lo que leyó el modelo; `GET /expenses/stats` muestra la
-  tasa de corrección por campo con uso real, no solo con el dataset.
-- **Medir antes de afirmar.** Un dataset con verdad conocida mide exactitud
-  por campo y, sobre todo, si el sistema detecta sus propios errores.
+- **The model transcribes; code decides.** The prompt asks it to copy `"1.234,56"`
+  exactly as shown. Conversion belongs in tested code, not an LLM that may
+  confuse separators or “correct” a sum.
+- **Confidence through comparison, not self-assessment.** The model is not
+  asked how confident it is. A field is trusted when an independent source (the
+  fiscal QR) agrees; otherwise it remains “unverified.”
+- **Resolve ambiguity only with visible assumptions.** Interpret `1.234` using
+  consistent decimal-format evidence from other amounts, then document-currency
+  defaults if needed. Report the interpretation with an informational issue;
+  unresolved values remain `null` and require review.
+- **Treat the document as untrusted data.** Ignore instructions written in the
+  image, and validate the QR strictly (official host, version, CUIT check digit).
+  The dataset includes an injection case.
+- **The QR returned to the client is HMAC-signed.** The server rejects unsigned
+  or altered QR data before marking it verified; `EXPENSE_LENS_SECRET` must
+  remain stable across restarts.
+- **Fail visibly and within bounds.** One call per request, no retries; HTTP 429
+  is reported as such. The model is never the only defense.
+- **Human corrections are data.** Each expense records which fields the person
+  changed from the model’s output; `GET /expenses/stats` reports real-use
+  correction rates by field, not just dataset results.
+- **Measure before making claims.** A dataset with known ground truth measures
+  field accuracy and, above all, whether the system detects its own errors.
 
-## Especialización argentina
+## Argentine-specific behavior
 
-- Importes `1.234,56`, `1,234.56`, `$`, `US$`, `U$S`; fechas día/mes/año.
-- CUIT con dígito verificador módulo 11.
-- Facturas A, B, C, E y M; notas de crédito y débito; tickets.
-- Factura A exige IVA discriminado; B y C no; Factura C con IVA se advierte.
-- Nota de crédito → movimiento que **resta**, no una compra.
-- Dólares y euros se conservan en su moneda: **nunca** se convierten.
-- QR fiscal ARCA (RG 4892/2020): CUIT, fecha, punto de venta, número, tipo,
-  moneda y total contrastados contra lo visible.
+- Amounts `1.234,56`, `1,234.56`, `$`, `US$`, `U$S`; dates day/month/year.
+- CUIT validated with the modulus-11 check digit.
+- A, B, C, E, and M invoices; credit and debit notes; receipts.
+- Invoice A requires itemized VAT; B and C do not; VAT on invoice C is flagged.
+- Credit note → a movement that **subtracts**, not a purchase.
+- Dollars and euros remain in their original currency: they are **never** converted.
+- ARCA fiscal QR (RG 4892/2020): CUIT, date, point of sale, number, type,
+  currency, and total are compared against visible values.
 
-Detalle de contratos, reglas y límites: [docs/technical.md](docs/technical.md).
+Contract, rule, and limit details: [docs/technical.md](docs/technical.md).
 
-## Evaluación
+## Evaluation
 
-`eval/dataset/` tiene 12 comprobantes **ficticios** con verdad conocida,
-generados por `eval/generate_dataset.py`: factura A con QR coincidente y con
-QR que contradice el total, factura B con IVA incluido, factura C, ticket de
-supermercado, nota de crédito, factura en USD, foto inclinada y borrosa, PDF
-multipágina, importe ambiguo, imagen que no es un comprobante e intento de
-inyección de instrucciones.
+`eval/dataset/` contains 12 **fictional** receipts with known ground truth,
+generated by `eval/generate_dataset.py`: invoice A with a matching QR and one
+whose QR contradicts the total, invoice B with VAT included, invoice C,
+supermarket receipt, credit note, USD invoice, tilted and blurry photo,
+multipage PDF, ambiguous amount, non-receipt image, and instruction-injection attempt.
 
-| Métrica | Pregunta que responde |
+| Metric | Question answered |
 |---|---|
-| Exactitud por campo | ¿Cuántos datos se leyeron bien? |
-| Campos inventados | ¿El modelo completó algo que no figura? |
-| Recall de detección | De los datos erróneos, ¿cuántos quedaron marcados para revisar? |
-| Falsos verificados | ¿Algún dato erróneo quedó como "verificado"? Debe ser 0. |
-| Tasa de revisión | ¿Cuánto trabajo le queda a la persona? |
+| Field accuracy | How many values were read correctly? |
+| Invented fields | Did the model fill in anything not present? |
+| Detection recall | How many incorrect values were flagged for review? |
+| False verified fields | Was any incorrect value marked “verified”? Must be 0. |
+| Review rate | How much work remains for the person? |
 
-### Resultados (`eval/results/eval-002`)
+### Results (`eval/results/eval-002`)
 
-Corrida real con `qwen/qwen3.8-27b`: 12 llamadas, una por caso, sin reintentos.
-Tres casos recibieron HTTP 429 del proveedor y se informan como fallos, no como aciertos.
+Real run with `qwen/qwen3.8-27b`: 12 calls, one per case, no retries.
+Three cases received provider HTTP 429 and are reported as failures, not successes.
 
-| Métrica | Sobre 9 casos evaluados |
+| Metric | Across 9 evaluated cases |
 |---|---|
-| Exactitud por campo | 96,7% (todos los campos 100% salvo `subtotal`, 66,7%) |
-| Falsos verificados | **0** |
-| Estado del QR fiscal correcto | 100% |
-| Campos inventados | 3 |
-| Latencia | mediana 1,2 s |
+| Field accuracy | 96.7% (all fields 100% except `subtotal`, 66.7%) |
+| False verified fields | **0** |
+| Fiscal QR status accuracy | 100% |
+| Invented fields | 3 |
+| Latency | median 1.2 s |
 
-**Análisis de errores → regla → re-medición.** Los tres campos inventados fueron
-el mismo patrón: en facturas B, C y E sin IVA discriminado, el modelo copió el
-total en `subtotal`, aunque el prompt pide `null`. Ninguna regla lo detectaba
-(recall de detección 0%). Se agregó `subtotal_equals_total` y se re-midió
-**offline sobre las mismas transcripciones**, sin volver a llamar al modelo:
+**Error analysis → rule → remeasurement.** The three invented fields followed
+the same pattern: on invoices B, C, and E without itemized VAT, the model copied
+the total into `subtotal`, although the prompt requests `null`. No rule detected
+this (0% detection recall). `subtotal_equals_total` was added and measured again
+**offline on the same transcripts**, without calling the model again:
 
-| | Antes | Con la regla |
+| | Before | With the rule |
 |---|---|---|
-| Recall de detección | 0% (0 de 3) | 100% (3 de 3) |
-| Tasa de revisión | 33% | 67% |
-| Falsos verificados | 0 | 0 |
+| Detection recall | 0% (0 of 3) | 100% (3 of 3) |
+| Review rate | 33% | 67% |
+| False verified fields | 0 | 0 |
 
-La regla no mejora lo que lee el modelo: mejora cuándo el sistema sabe que no
-debe confiar. El costo es más revisión humana, y queda medido.
-Muestra chica y sintética: no es una estimación para comprobantes reales.
+The rule does not improve what the model reads; it improves the system’s ability
+to recognize when not to trust it. The cost is more human review, and it is
+measured. Small synthetic sample: not an estimate for real receipts.
 
-### Categoría sugerida: modelo contra línea base (`eval/results/eval-003`)
+### Historical category evaluation (`eval/results/eval-003`)
 
-El modelo sugiere la categoría en la **misma llamada** de extracción, sin costo
-extra; una línea base de palabras clave sobre el emisor compite con él. Ambos
-usan el mismo criterio escrito por categoría (`CATEGORY_GUIDE`), compartido con
-las etiquetas del dataset. La persona siempre decide.
+This is a historical run and **not a final evaluation of the current candidate
+with signed QR and amount evidence**. Its results belong to the version evaluated
+at that time; do not extrapolate them to the current version or real receipts.
+The complete report preserves its metrics and limitations.
 
-| Sobre 10 casos evaluados (2 HTTP 429) | Modelo | Reglas por emisor |
+The model suggests a category in the **same extraction call**, at no extra cost;
+a keyword baseline based on the issuer is compared against it. Both use the same
+written category criteria (`CATEGORY_GUIDE`), shared with the dataset labels. The
+person always decides.
+
+| Across 10 evaluated cases (2 HTTP 429) | Model | Issuer rules |
 |---|---|---|
-| Exactitud de categoría | 10/10 | 3/10 |
+| Category accuracy | 10/10 | 3/10 |
 
-Las reglas casi no se equivocan: **se abstienen** cuando el emisor no es
-reconocible ("Cafetería Segura", "Servicios Imaginarios SRL"). El modelo aporta
-cobertura porque lee el detalle ("Almuerzo ejecutivo", "Mantenimiento mensual").
-El dataset es sintético y explícito: es un resultado fácil, no una garantía.
-En uso real, cada gasto guarda si la persona aceptó la sugerencia y
-`GET /expenses/stats` informa la tasa de aceptación por fuente.
+The rules rarely make mistakes: they **abstain** when the issuer is not
+recognizable (“Cafetería Segura”, “Servicios Imaginarios SRL”). The model adds
+coverage by reading line-item descriptions (“Almuerzo ejecutivo”, “Mantenimiento
+mensual”). The dataset is synthetic and explicit: this is an easy result, not a
+guarantee. In real use, each expense records whether the person accepted the
+suggestion, and `GET /expenses/stats` reports acceptance rates by source.
 
-En esta corrida los campos llegaron al 100% y el modelo no repitió la copia del
-total en `subtotal`. Con 10 casos no se distingue el efecto del prompt nuevo de la
-variación entre corridas, así que la regla `subtotal_equals_total` se mantiene.
+In that run, field accuracy reached 100%, and the model did not repeat the
+copying of the total into `subtotal`. With 10 cases, the effect of the new prompt
+could not be distinguished from run-to-run variation, so the
+`subtotal_equals_total` rule remains.
 
 ```bash
-uv run python eval/run.py eval/results/<nombre> --allow-provider --pause-seconds 20
-uv run python eval/score.py eval/results/<nombre>                 # offline
-uv run python eval/score.py eval/results/<nombre> --replay-rules  # reglas actuales
+uv run python eval/run.py eval/results/<name> --allow-provider --pause-seconds 20
+uv run python eval/score.py eval/results/<name>                 # offline
+uv run python eval/score.py eval/results/<name> --replay-rules  # current rules
 ```
 
-El runner hace una llamada por caso, sin reintentos, y nunca sobrescribe una
-corrida. `eval-001` lanzó los casos sin pausa: 10 de 12 recibieron HTTP 429 y se
-conservan así. La primera prueba con un único recibo está en
+The runner makes one call per case, without retries, and never overwrites a run.
+`eval-001` launched cases without pauses: 10 of 12 received HTTP 429, preserved
+as-is. The first test with a single receipt is in
 [eval/results/smoke-001](eval/results/smoke-001/README.md).
 
-## Gestión de gastos
+## Expense management
 
-- **Confirmar gasto** con categoría: el servidor vuelve a normalizar y validar;
-  nunca confía en estados enviados por el navegador.
-- **Duplicados bloqueados hasta revisión** (409): mismo comprobante fiscal
-  (CUIT, tipo, letra, punto de venta y número), mismo archivo (SHA-256) u
-  operación similar (emisor, fecha y total). La persona ve cuál es el gasto
-  existente y puede guardar de todos modos.
-- **Historial** con filtros por fecha, comercio, categoría, importe y moneda.
-  Totales por moneda sin mezclarlas; las notas de crédito restan.
-- **CSV** listo para planilla, protegido contra inyección de fórmulas.
-- **Privacidad:** SQLite local (`data/expenses.sqlite`, ignorado por Git). Se
-  guardan los datos y el hash del archivo, **nunca la imagen**. Borrado definitivo.
+- **Confirm expense** with a category: the server normalizes and validates again;
+  it never trusts statuses sent by the browser.
+- **Duplicates blocked pending review** (409): same fiscal receipt (CUIT, type,
+  letter, point of sale, and number), same file (SHA-256), or similar operation
+  (issuer, date, and total). The person sees the existing expense and can save anyway.
+- **History** with date, merchant, category, amount, and currency filters. Totals
+  remain separate by currency; credit notes subtract.
+- **CSV** ready for spreadsheets and protected against formula injection.
+- **Privacy:** local SQLite (`data/expenses.sqlite`, Git-ignored). Data and the
+  file hash are stored, **never the image**. Permanent deletion is supported.
 
 ## Stack
 
 Python 3.12 · FastAPI · Pydantic · SQLite · Groq (`qwen/qwen3.8-27b`) · PDFium ·
 zxing-cpp · React + TypeScript + Vite · Vitest · pytest · Ruff.
 
-## Ejecutar localmente
+## Run locally
 
-Requisitos: Python 3.12 o superior y [uv](https://docs.astral.sh/uv/).
-Desde esta carpeta:
+Requirements: Python 3.12 or later and [uv](https://docs.astral.sh/uv/).
+From this directory:
 
 ```bash
 uv sync --locked
-# Una sola vez: un secreto propio para firmar el QR fiscal, guardado en .env.
+# Once: generate a private secret for signing fiscal QR data and store it in .env.
 echo "EXPENSE_LENS_SECRET=$(uv run python -c 'import secrets; print(secrets.token_hex(32))')" >> .env
 uv run --env-file .env uvicorn expense_lens.main:app --reload --host 127.0.0.1
 ```
 
-`.env` está ignorado por Git: nunca publiques ese secreto. Si falta, el servidor
-usa uno al azar por proceso y, al reiniciarlo, hay que volver a extraer.
+`.env` is Git-ignored: never publish this secret. If it is missing, the server
+uses a random per-process value, and receipts must be extracted again after a restart.
 
-- Salud: <http://127.0.0.1:8000/health>
-- Documentación interactiva: <http://127.0.0.1:8000/docs>
-- Contrato OpenAPI: <http://127.0.0.1:8000/openapi.json>
+- Health: <http://127.0.0.1:8000/health>
+- Interactive documentation: <http://127.0.0.1:8000/docs>
+- OpenAPI contract: <http://127.0.0.1:8000/openapi.json>
 
-`GET /health` devuelve:
+`GET /health` returns:
 
 ```json
 {"status":"ok","service":"expense-lens"}
 ```
 
-Es una comprobación de respuesta de la API, no de servicios externos.
-Servidor local de desarrollo: no desplegar públicamente como está.
+This checks the API response, not external services. This is a local development
+server; do not deploy it publicly as-is.
 
-### Interfaz web
+### Web interface
 
-En otra terminal, desde esta carpeta:
+In another terminal, from this directory:
 
 ```bash
 cd web
@@ -225,33 +240,33 @@ npm ci
 npm run dev
 ```
 
-Abrí <http://127.0.0.1:5173> con la API ejecutándose en el puerto 8000.
-Vite reenvía `/receipts` a la API local. Seleccioná un archivo, revisá la vista
-previa y aceptá el procesamiento externo antes de extraer. Después podés corregir
-los campos y usar **Validar correcciones**, que no llama a Groq.
+Open <http://127.0.0.1:5173> while the API is running on port 8000. Vite forwards
+`/receipts` to the local API. Select a file, review its preview, and approve
+external processing before extraction. You can then correct fields and choose
+**“Validar correcciones” (“Validate corrections”)**, which does not call Groq.
 
-El arranque anterior deja la extracción deshabilitada. Para habilitarla
-explícitamente, reemplazá el comando del servidor por:
+The command above leaves extraction disabled. To explicitly enable it, replace
+the server command with:
 
 ```bash
 EXPENSE_LENS_ENABLE_GROQ=1 uv run --env-file .env uvicorn expense_lens.main:app --reload --host 127.0.0.1
 ```
 
-Cada extracción autorizada puede consumir cuota del proveedor. El consentimiento
-no se conserva al cambiar de archivo. Más detalles en [web/README.md](web/README.md).
+Each authorized extraction may consume provider quota. Consent is not retained
+when changing files. More details in [web/README.md](web/README.md).
 
-### Proveedor seleccionado: Groq
+### Selected provider: Groq
 
-Crear un `.env` local con `GROQ_API_KEY`. Está ignorado por Git y no debe
-publicarse; no pegar su valor en documentación o logs. El comando de arranque
-usa `uv --env-file` para cargarla en el proceso.
+Create a local `.env` file with `GROQ_API_KEY`. It is Git-ignored and must not
+be published; do not paste its value into documentation or logs. The startup
+command uses `uv --env-file` to load it into the process.
 
-La clave sola no habilita extracción: se requiere `EXPENSE_LENS_ENABLE_GROQ=1`
-en el entorno del servidor, además del consentimiento explícito por solicitud.
+The key alone does not enable extraction: the server environment must also set
+`EXPENSE_LENS_ENABLE_GROQ=1`, and each request requires explicit consent.
 
-## Verificar
+## Verify
 
-Ejecutar desde `expense-lens/`, no desde el directorio de estudio padre.
+Run from `expense-lens/`, not from the parent study directory.
 
 ```bash
 uv run pytest -q
@@ -260,30 +275,30 @@ uv run ruff format --check .
 (cd web && npm test && npm run build)
 ```
 
-El primer test se ejecutó antes de crear el módulo de la API: falló por módulo
-ausente (RED); con la implementación pasa (GREEN).
-La combinación actual de Starlette y httpx emite una advertencia de deprecación
-del cliente de pruebas; no afecta el resultado y no se oculta.
+The first test ran before the API module was created and failed because the
+module was missing (RED); it passes with the implementation (GREEN). The current
+Starlette and httpx combination emits a deprecation warning for the test client;
+it does not affect the result and is not suppressed.
 
-Para el editor, abrir esta carpeta y seleccionar `.venv/bin/python`.
-`pyrightconfig.json` declara ese entorno y `src` como ruta de imports. El LSP
-iniciado desde el workspace padre puede seguir sin reconocerlos; durante este
-incremento reportó imports faltantes, aunque la suite en el entorno uv pasa.
-No se considera un typecheck limpio ni se suprimen esos diagnósticos.
+For the editor, open this directory and select `.venv/bin/python`.
+`pyrightconfig.json` declares that environment and `src` as the import path. The
+LSP started from the parent workspace may still fail to recognize them; during
+this increment it reported missing imports, although the suite passes in the uv
+environment. This is not considered a clean typecheck, and those diagnostics are
+not suppressed.
 
-## Límites conocidos
+## Known limitations
 
-- Desarrollo local de una sola persona: sin autenticación, separación entre
-  usuarios ni sandbox de parsers. No desplegar públicamente como está.
-- El QR válido no prueba autenticidad: no se consulta a ARCA.
-- El dataset es sintético: mide comportamiento del pipeline, no generalización
-  a comprobantes reales.
-- Un archivo = un comprobante; no se detectan varios en el mismo documento.
-- No es asesoramiento tributario ni realiza pagos.
+- Local, single-user development: no authentication, user isolation, or parser
+  sandbox. Do not deploy publicly as-is.
+- A valid QR does not prove authenticity: ARCA is not queried.
+- The synthetic dataset measures pipeline behavior, not generalization to real receipts.
+- One file = one receipt; multiple receipts in a document are not detected.
+- This is not tax advice and does not make payments.
 
-## Próximos pasos
+## Next steps
 
-- **Paneles:** gastos mensuales, recurrentes y presupuestos.
-- **Dataset ampliado:** comprobantes reales anonimizados con autorización.
-- **Canal WhatsApp** como Adapter de entrada sobre el mismo pipeline.
-- **Multiusuario:** autenticación y separación de datos antes de cualquier despliegue.
+- **Dashboards:** monthly and recurring expenses, and budgets.
+- **Expanded dataset:** anonymized real receipts with authorization.
+- **WhatsApp channel** as an input Adapter on the same pipeline.
+- **Multi-user support:** authentication and data isolation before any deployment.

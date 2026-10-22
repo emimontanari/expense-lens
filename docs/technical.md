@@ -1,12 +1,12 @@
-# ExpenseLens: documentación técnica
+# ExpenseLens: Technical Documentation
 
-Detalle de contratos, límites y decisiones. La visión general está en el
-[README](../README.md).
+Contracts, limits, and design decisions. See the [README](../README.md) for an overview.
 
-## Validar y normalizar un comprobante
+## Validate and normalize a receipt
 
-`POST /receipts/validate` recibe la transcripción (del modelo o corregida por una
-persona) y opcionalmente el QR fiscal devuelto por la extracción:
+`POST /receipts/validate` accepts a transcript from the model or a human correction,
+plus optional fiscal QR data returned by extraction. QR data must be accompanied
+by its server-issued `fiscal_qr_signature` (see [Signed QR](#signed-qr-hmac)).
 
 ```json
 {
@@ -26,168 +26,185 @@ persona) y opcionalmente el QR fiscal devuelto por la extracción:
 }
 ```
 
-La respuesta incluye `receipt` normalizado (`"1210.00"`, `"2026-10-15"`,
-`"30000000007"`, `"ARS"`), `issues` con `code`, `field` y `severity`,
-`field_status` por campo, `movement` y `requires_human_review: true`.
+The response includes a normalized `receipt` (`"1210.00"`, `"2026-10-15"`,
+`"30000000007"`, `"ARS"`), `issues` with `code`, `field`, and `severity`,
+per-field `field_status`, `movement`, and `requires_human_review: true`.
 
-### Normalización (`normalize.py`)
+### Normalization (`normalize.py`)
 
-| Entrada | Resultado | Regla |
+| Input | Result | Rule |
 |---|---|---|
-| `1.234,56`, `$ 1.234,56`, `1,234.56` | `1234.56` | El último separador con 1–2 dígitos es el decimal. |
-| `1.234` o `1,234` | `null` + `ambiguous_amount` | Un solo grupo de tres dígitos puede ser miles o decimales: no se adivina. |
-| `1.234` en un comprobante en pesos, o con otros importes como `1.000,00` | `1234` + `amount_interpreted_from_document` (info) | Primero manda la evidencia de los otros importes inequívocos; si se contradicen, no hay estilo. Si ningún otro importe opina, decide la moneda del documento: pesos y euros usan coma decimal, dólares punto. Sin moneda conocida sigue siendo `ambiguous_amount`. |
-| `-150,00`, `(150,00)` | `150.00` | Importes absolutos; el signo lo da el tipo de comprobante. |
-| `15/10/2026` | `2026-10-15` | Día primero, formato argentino. |
-| `$` | `ARS` + `currency_inferred_from_symbol` (info) | En Argentina `$` es pesos, pero se informa la inferencia. |
-| `US$`, `U$S` | `USD` | Nunca se convierte a pesos. |
-| `30-00000000-7` | `30000000007` | Dígito verificador módulo 11; inválido queda `null` + `invalid_cuit`. |
+| `1.234,56`, `$ 1.234,56`, `1,234.56` | `1234.56` | The last separator followed by 1–2 digits is decimal. |
+| `1.234` or `1,234`, without supporting context | `null` + `ambiguous_amount` | Do not guess whether a single three-digit group represents thousands or decimals. |
+| `1.234` on a peso receipt, or alongside amounts such as `1.000,00` | `1234` + `amount_interpreted_from_document` (info) | Unambiguous amounts take precedence; conflicting styles provide no hint. Otherwise use the document currency: pesos and euros default to decimal commas, dollars to decimal points. Unknown currency leaves the amount ambiguous. These are application defaults, not universal currency-format guarantees. |
+| `-150,00`, `(150,00)` | `150.00` | Amounts are absolute; document type determines the sign. |
+| `15/10/2026` | `2026-10-15` | Argentine day-first format. |
+| `$` | `ARS` + `currency_inferred_from_symbol` (info) | The Argentine default is pesos, but the inference is reported. |
+| `US$`, `U$S` | `USD` | Never converted to pesos. |
+| `30-00000000-7` | `30000000007` | Validate the modulus-11 check digit; invalid values become `null` + `invalid_cuit`. |
 
-### Reglas (`rules.py`)
+### Rules (`rules.py`)
 
-| Código | Cuándo | Severidad |
+| Code | Trigger | Severity |
 |---|---|---|
-| `missing_field` | Falta un campo requerido. Siempre: emisor, fecha, moneda, total. Facturas y notas: CUIT, número, letra. Factura A: subtotal e IVA. | warning |
-| `tax_already_included` | `subtotal == total` con IVA > 0: el neto ya incluía el IVA. | warning |
-| `total_below_subtotal` | El total es menor que el subtotal: probable confusión de campos. | warning |
-| `total_mismatch` | `subtotal + tax != total`, exacto con `Decimal`. | warning |
-| `subtotal_equals_total` | Subtotal igual al total sin IVA discriminado: suele ser una copia del total (hallazgo de `eval-002`). | warning |
-| `unexpected_tax` | Factura C con IVA discriminado. | warning |
-| `future_date` | Fecha posterior a hoy. | warning |
-| `qr_mismatch` | El campo contradice el QR fiscal. | warning |
-| `credit_note` | Nota de crédito: `movement = credit`, resta en lugar de sumar. | info |
-| `foreign_currency` | USD o EUR: se conserva la moneda original. | info |
-| `amount_interpreted_from_document` | Un importe ambiguo se resolvió con el formato del comprobante (otros importes o moneda). | info |
+| `missing_field` | A required field is absent. Always: issuer, date, currency, total. Invoices and notes: CUIT, number, letter. Invoice A: subtotal and VAT. | warning |
+| `tax_already_included` | `subtotal == total` with VAT > 0: the purported net amount already includes VAT. | warning |
+| `total_below_subtotal` | Total is below subtotal: possible field confusion. | warning |
+| `total_mismatch` | `subtotal + tax != total`, compared exactly with `Decimal`. | warning |
+| `subtotal_equals_total` | Subtotal equals total without itemized VAT: possibly copied from total (discovered in `eval-002`). | warning |
+| `unexpected_tax` | Invoice C includes itemized VAT. | warning |
+| `future_date` | Date is later than today. | warning |
+| `qr_mismatch` | A field contradicts the fiscal QR. | warning |
+| `credit_note` | Credit note: `movement = credit`, subtract rather than add. | info |
+| `foreign_currency` | USD or EUR: preserve the original currency. | info |
+| `amount_interpreted_from_document` | Resolve an ambiguous amount using document format evidence or currency defaults. | info |
 
-`field_status` resume cada campo: `verified` (coincide con el QR), `conflict`,
-`missing`, `unverified` (leído por el modelo, sin segunda fuente) o `empty`.
-Las reglas señalan; **nunca corrigen ni aprueban** datos.
+`field_status` summarizes each field: `verified` (matches the QR), `conflict`,
+`missing`, `unverified` (read by the model, without a second source), or `empty`.
+Rules flag issues; they **never correct or approve** data.
 
-## QR fiscal ARCA (`fiscal_qr.py`)
+## ARCA fiscal QR (`fiscal_qr.py`)
 
-Las facturas electrónicas argentinas incluyen un QR (RG 4892/2020) con el texto
-`https://www.arca.gob.ar/fe/qr/?p={JSON en Base64}`, según la
-[especificación oficial](https://www.arca.gob.ar/fe/qr/documentos/QRespecificaciones.pdf).
+Argentine electronic invoices include a QR (RG 4892/2020) containing
+`https://www.arca.gob.ar/fe/qr/?p={Base64 JSON}`, according to the
+[official specification](https://www.arca.gob.ar/fe/qr/documentos/QRespecificaciones.pdf).
 
-- Se decodifica **localmente** con zxing-cpp antes de llamar al modelo, sobre
-  los píxeles ya decodificados y validados (imagen o páginas PDF renderizadas).
-- Se exige `https`, host `afip.gob.ar` o `arca.gob.ar`, ruta `/fe/qr/`,
-  Base64 y JSON válidos, `ver = 1`, CUIT con dígito verificador correcto,
-  importes numéricos con hasta dos decimales y tipo de autorización CAE/CAEA.
-  Cualquier otro QR se informa como `fiscal_qr_status = invalid`.
-- Se contrastan CUIT, fecha, punto de venta y número, tipo, letra, moneda y total.
-  Coincidencia → `verified`; diferencia → `qr_mismatch`.
-- El QR **no completa** campos vacíos ni reemplaza la lectura del documento:
-  no contiene emisor, subtotal, impuestos ni conceptos. La interfaz ofrece usar
-  su valor campo por campo, como acción explícita de la persona.
-- Un QR válido no prueba que el comprobante sea auténtico: no se consulta a ARCA.
+- Decode **locally** with zxing-cpp before calling the model, using already
+  decoded and validated image pixels or rendered PDF pages.
+- Require `https`, an `afip.gob.ar` or `arca.gob.ar` host, the `/fe/qr/` path,
+  valid Base64 and JSON, `ver = 1`, a valid CUIT check digit, numeric amounts
+  with at most two decimal places, and CAE/CAEA authorization. Other decoded
+  QR content is reported as `fiscal_qr_status = invalid`.
+- Compare CUIT, date, point of sale and number, type, letter, currency, and total.
+  Agreement produces `verified`; disagreement produces `qr_mismatch`.
+- QR data **never fills empty fields** or replaces document reading. It does not
+  contain the issuer name, subtotal, taxes, or line items. The UI lets the person
+  explicitly use its value one field at a time.
+- A valid QR does not prove invoice authenticity: ARCA is not queried.
 
-## QR firmado (HMAC)
+## Signed QR (HMAC)
 
-El QR se extrae en el servidor, pero la interfaz devuelve al cliente los datos del QR para que pueda pedir una nueva validación o confirmar el gasto. Sin una prueba, un cliente podría inventar un QR y obtener campos `verified` (“Verificado por QR”). Por eso el servidor firma el QR extraído antes de entregarlo.
+The server extracts the QR and returns its data to the browser, which sends it
+back when requesting validation or confirming an expense. Without proof of origin,
+a client could invent QR data and obtain `verified` fields (shown as
+“Verificado por QR”). The server therefore signs extracted QR data before returning it.
 
-La firma es HMAC-SHA-256 sobre la serialización JSON canónica del modelo normalizado (`sort_keys`, separadores compactos y UTF-8). `/receipts/extract` entrega `fiscal_qr_signature`; `/receipts/validate` y `/expenses` verifican que corresponda exactamente al QR recibido, usando comparación de tiempo constante. Un QR alterado, una firma ausente o una firma inventada producen HTTP 422 `fiscal_qr_signature_invalid`. `fiscal_qr: null` no requiere firma. La verificación ocurre en la capa HTTP; `review_receipt` permanece independiente.
+The signature is HMAC-SHA-256 over canonical JSON of the normalized model
+(sorted keys, compact separators, UTF-8). `/receipts/extract` returns
+`fiscal_qr_signature`; `/receipts/validate` and `/expenses` check it against the
+received QR using constant-time comparison. Altered QR data, missing signatures,
+and invented signatures produce HTTP 422 `fiscal_qr_signature_invalid`.
+`fiscal_qr: null` requires no signature. Verification happens in the HTTP layer;
+`review_receipt` stays independent.
 
-Configura `EXPENSE_LENS_SECRET` con un secreto aleatorio fuerte y estable en el entorno del servidor. Si no está configurado, el proceso genera un secreto aleatorio en memoria: una firma emitida antes de reiniciar dejará de ser válida después del reinicio, y habrá que volver a extraer el comprobante. No uses esta configuración efímera en un despliegue que necesite conservar solicitudes en curso.
+Set `EXPENSE_LENS_SECRET` to a strong, random, stable secret in the server
+environment. If absent, the process generates a random in-memory secret: a restart
+invalidates signatures already issued, requiring the user to extract again.
+Do not use an ephemeral secret for deployments that must preserve in-flight requests.
 
-Esto evita falsificar firmas sin conocer el secreto; no demuestra que ARCA haya emitido el comprobante ni sustituye autenticación o controles de acceso.
+This prevents forging signatures without the secret. It does not prove that ARCA
+issued the invoice or replace authentication and access controls.
 
-## Extraer un comprobante con Groq (opt-in, solo local)
+## Extract a receipt with Groq (opt-in, local only)
 
-`POST /receipts/extract` recibe JPEG, PNG o PDF como cuerpo binario, con los mismos
-límites de inspección. Requiere el header `X-Allow-External-Processing: true`;
-sin él devuelve 403. Con el proveedor deshabilitado o sin clave devuelve 503.
-**Ese header expresa consentimiento, no es autenticación ni control de acceso.**
+`POST /receipts/extract` accepts JPEG, PNG, or PDF as a binary body, with the same
+inspection limits. It requires `X-Allow-External-Processing: true`; without it,
+the response is 403. A disabled provider or missing key produces 503.
+**This header expresses consent, not authentication or access control.**
 
-Al habilitarlo y usar ese endpoint, se envía la imagen completa a Groq, incluidos
-los metadatos presentes. En PDF se envían imágenes renderizadas de todas sus páginas,
-no el archivo original ni sus metadatos no visibles. Usar solo ejemplos ficticios o documentos cuyo envío
-esté autorizado; no se ha evaluado aquí la política de retención del proveedor.
-No habilitar logs de depuración del SDK/HTTP con documentos o claves reales.
+When enabled, the endpoint sends the entire image to Groq, including any embedded
+metadata. For PDFs it sends rendered images of all pages, not the original file or
+non-visible metadata. Use only fictional examples or documents authorized for
+external processing; the provider's retention policy has not been assessed here.
+Do not enable SDK/HTTP debug logging with real documents or credentials.
 
-El Adapter usa `qwen/qwen3.8-27b`, listado en la [documentación de visión de Groq](https://console.groq.com/docs/vision).
-La cuenta respondió con ese modelo en JPEG y PDF con texto en la primera prueba.
-PNG y PDF escaneado recibieron HTTP 429, no un resultado de extracción.
-Se usa JSON mode, no una garantía de esquema: se exigen exactamente las diez
-claves de `RawReceipt` más `category` (once) y se validan con Pydantic. El modelo **transcribe** los
-valores tal como aparecen (`"1.234,56"`, `"15/10/2026"`, `"$"`); normalizar,
-calcular y validar es trabajo de código determinista. Datos desconocidos quedan
-`null`; los importes no se corrigen. La revisión humana sigue siendo obligatoria.
+The Adapter uses `qwen/qwen3.8-27b`, referenced in the
+[Groq vision documentation](https://console.groq.com/docs/vision). The account
+returned results for JPEG and text PDF in the first test; PNG and scanned PDF
+received HTTP 429 instead of extraction results.
 
-Una solicitud realiza como máximo una llamada: sin retries ni reparación,
-1024 tokens máximos de salida y timeout SDK de 20 segundos por operación de red
-(no un límite total de duración de la petición). Errores 502/503/504 no incluyen
-respuestas crudas del proveedor. Un HTTP 429 se distingue como
-`503 provider_rate_limited`, sin reintentar. Los tests usan MockTransport y clave ficticia.
+JSON mode is not a schema guarantee: require exactly the ten `RawReceipt` keys
+plus `category` (eleven total), validated with Pydantic. The model **transcribes**
+values as printed (`"1.234,56"`, `"15/10/2026"`, `"$"`); deterministic code handles
+normalization, calculation, and validation. Unknown values stay `null`; amounts
+are not corrected. Human review remains mandatory.
 
-### Categoría sugerida (`categories.py`)
+Each request makes at most one call: no retries or repair, at most 1024 output
+tokens, and an SDK timeout of 20 seconds per network operation (not a total
+request-duration limit). Errors 502/503/504 do not expose raw provider responses.
+HTTP 429 is distinguished as `503 provider_rate_limited`, without retrying.
+Tests use MockTransport and fictional credentials.
 
-Criterio único de categorías (`CATEGORY_GUIDE`), usado en el prompt del modelo y
-para etiquetar el dataset; sin definiciones escritas la métrica sería arbitraria:
+### Category suggestion (`categories.py`)
 
-| Categoría | Definición |
+`CATEGORY_GUIDE` defines the criteria used by the model prompt and dataset labels.
+Without written definitions, the metric would be arbitrary.
+
+| Category identifier | Definition |
 |---|---|
-| `supermercado` | supermercados, almacenes y autoservicios (alimentos, bebidas, limpieza e higiene para el consumo cotidiano) |
-| `combustible` | estaciones de servicio: nafta, gasoil, GNC y lubricantes |
-| `restaurantes` | comidas y bebidas consumidas fuera o por delivery: restaurantes, bares, cafeterías y parrillas |
-| `servicios` | servicios públicos y abonos del hogar: luz, gas, agua, internet, telefonía, TV y mantenimientos mensuales |
-| `transporte` | SUBE, taxi, remís, apps de viaje, peajes, estacionamiento y pasajes |
-| `salud` | farmacias, consultas médicas, prepagas y laboratorios |
-| `hogar` | ferreterías, pinturerías, muebles, electrodomésticos y reparaciones de la vivienda |
-| `otros` | todo lo demás, incluidos honorarios, consultoría, software y licencias, librería y reparaciones que no son de la vivienda |
+| `supermercado` | Supermarkets, grocery stores, and convenience grocery outlets: everyday food, drinks, cleaning, and hygiene products. |
+| `combustible` | Gas stations: gasoline, diesel, CNG, and lubricants. |
+| `restaurantes` | Food and drinks consumed out or delivered: restaurants, bars, cafes, and grills. |
+| `servicios` | Utilities and household subscriptions: electricity, gas, water, internet, phone, TV, and monthly maintenance. |
+| `transporte` | SUBE, taxis, private hire, ride-hailing, tolls, parking, and tickets. |
+| `salud` | Pharmacies, medical appointments, health plans, and laboratories. |
+| `hogar` | Hardware, paint, furniture, appliances, and home repairs. |
+| `otros` | Everything else, including professional fees, consulting, software and licenses, stationery, and repairs unrelated to housing. |
 
-Las reglas por emisor nunca devuelven `otros`: sin coincidencia se abstienen
-(`null`), y eso cuenta como no acertado en la exactitud de la línea base.
+Issuer rules never return `otros`: without a match they abstain (`null`), which
+counts as incorrect in baseline category accuracy.
 
-La misma llamada devuelve `category`, que **no es una transcripción** sino una
-clasificación que el prompt pide por separado: una de las ocho categorías de gasto o
-`null`. La ausencia de la clave es `502 invalid_model_output` (mismo criterio
-estricto de claves); un valor fuera de la lista invalida solo la sugerencia
-(`model: null`) y la extracción sigue siendo 200.
+The same call returns `category`, which is **classification, not transcription**:
+one of the eight expense categories or `null`. A missing key produces
+`502 invalid_model_output` under the same strict key policy. An out-of-list value
+invalidates only the suggestion (`model: null`); extraction still returns 200.
 
-La línea base de reglas es determinista y sin red: normaliza el emisor (minúsculas,
-sin acentos) y busca palabras completas (`dia` no coincide con `Diaz`). Palabras
-clave: combustible (ypf, shell, axion, puma), supermercado (coto, carrefour, dia,
-jumbo, disco, vea, changomas, supermercado), salud (farmacia, farmacity), servicios
-(edenor, edesur, metrogas, aysa, telecom, movistar, claro, personal), transporte
-(sube, uber, cabify, peaje, taxi, estacionamiento), restaurantes (restaurante,
-parrilla, pizzeria, cafe, bar) y hogar (easy, sodimac, ferreteria, pintureria). Sin
-coincidencia devuelve `null`; nunca sugiere `otros`.
+The deterministic, offline baseline lowercases the issuer, removes accents, and
+matches whole words (`dia` does not match `Diaz`). Keywords:
 
-`ReceiptValidation.category_suggestion` (`null` por defecto) es
-`{model, rules, suggested, source}`; `suggested` es `model` si no es `null`, si no
-`rules`, y `source` indica cuál. `/receipts/extract` completa `model` y `rules`;
-`/receipts/validate` calcula solo `rules` (no hay modelo, `model: null`).
+| Category | Issuer keywords |
+|---|---|
+| `combustible` | ypf, shell, axion, puma |
+| `supermercado` | coto, carrefour, dia, jumbo, disco, vea, changomas, supermercado |
+| `salud` | farmacia, farmacity |
+| `servicios` | edenor, edesur, metrogas, aysa, telecom, movistar, claro, personal |
+| `transporte` | sube, uber, cabify, peaje, taxi, estacionamiento |
+| `restaurantes` | restaurante, parrilla, pizzeria, cafe, bar |
+| `hogar` | easy, sodimac, ferreteria, pintureria |
 
-### PDF con texto o escaneado
+`ReceiptValidation.category_suggestion` (default `null`) is
+`{model, rules, suggested, source}`. `suggested` uses `model` when non-null,
+otherwise `rules`; `source` identifies which. `/receipts/extract` fills both;
+`/receipts/validate` computes only `rules` (`model: null`, no model call).
 
-Se renderizan todas las páginas en orden, sin extraer texto por un camino
-alternativo. Se envían juntas en **una sola llamada**, con un único resultado
-para el comprobante; nunca se suman automáticamente totales entre páginas.
-Un archivo debe contener un único comprobante: el prompt pide no mezclar
-identidades, pero no hay detección determinista de varios comprobantes.
+### Text and scanned PDFs
 
-- Hasta 3 páginas y 5 MiB de entrada; rechaza PDF cifrados.
-- Renderizador PDFium en un proceso nuevo por documento, sin heredar claves
-  ni variables del servidor. No se ejecuta PDFium simultáneamente en threads.
-- Máximo 1400 píxeles por lado, 2 millones de píxeles por página y 5 MiB de JPEG
-  generados en total; escala máxima 2 píxeles por punto. La reducción puede
-  perder letras pequeñas: no demuestra exactitud de lectura.
-- Proceso de render con timeout de 10 segundos. Fallos y timeout devuelven 422;
-  exceso de geometría o salida devuelve 413. Se procesa todo antes de llamar a Groq.
-- Se cierran páginas y bitmaps por página. No hay almacenamiento intermedio.
+Render every page in order, without a separate text-extraction path. Send pages
+together in **one call**, producing one receipt result; never automatically sum
+totals across pages. One file must contain one receipt. The prompt asks not to
+mix identities, but there is no deterministic multiple-receipt detector.
 
-El presupuesto de píxeles limita los bitmaps solicitados, **no es un límite duro
-de RAM del parser nativo**. El proceso separado limita su duración y evita el
-uso concurrente de PDFium en threads, pero no constituye una sandbox. La inspección
-previa con pypdf aún ocurre en el proceso servidor, sin timeout dedicado.
-La extracción no guarda nada; solo `POST /expenses` persiste, tras confirmación humana.
+- At most 3 pages and 5 MiB input; reject encrypted PDFs.
+- Run PDFium in a new process per document without inheriting server keys or
+  environment variables. Do not run PDFium concurrently in threads.
+- At most 1400 pixels per side, 2 million pixels per page, and 5 MiB of generated
+  JPEG data total; maximum scale is 2 pixels per point. Downscaling may lose small
+  text and does not establish reading accuracy.
+- Rendering has a 10-second timeout. Failures/timeouts return 422; excessive
+  geometry/output returns 413. Process everything before calling Groq.
+- Close pages and bitmaps per page. No intermediate storage.
 
-## Inspeccionar un archivo (solo desarrollo local)
+The pixel budget limits requested bitmaps, **not native-parser RAM usage**. The
+separate process bounds duration and avoids concurrent PDFium calls in threads,
+but is not a sandbox. Initial pypdf inspection still runs in the server process
+without a dedicated timeout. Extraction persists nothing; only `POST /expenses`
+saves data, after human confirmation.
 
-`POST /documents/inspect` recibe el **archivo como cuerpo binario**, no multipart,
-JSON, base64 ni una URL. No confía en la extensión, nombre ni MIME declarado.
-No escribe el documento a disco ni lo envía a terceros.
+## Inspect a file (local development only)
+
+`POST /documents/inspect` accepts the **file as a binary body**, not multipart,
+JSON, Base64, or a URL. It does not trust extensions, filenames, or declared MIME
+types. It neither writes the document to disk nor sends it to third parties.
 
 ```bash
 curl --fail-with-body http://127.0.0.1:8000/documents/inspect \
@@ -195,129 +212,126 @@ curl --fail-with-body http://127.0.0.1:8000/documents/inspect \
   --data-binary @examples/synthetic/receipt.png
 ```
 
-Respuesta: `format` (`jpeg`, `png` o `pdf`), `size_bytes`, `pages` (solo PDF;
-`null` para imagen) y `requires_human_review: true`. No hay campos extraídos.
+Response: `format` (`jpeg`, `png`, or `pdf`), `size_bytes`, `pages` (PDF only;
+`null` for images), and `requires_human_review: true`. No extracted fields.
 
-| Control | Límite / comportamiento |
+| Control | Limit / behavior |
 |---|---|
-| Bytes reales | Máximo 5 MiB, comprobado durante recepción, sin confiar en Content-Length. |
-| JPEG / PNG | Máximo 12 millones de píxeles; verifica y decodifica; rechaza animación. |
-| PDF | Máximo 3 páginas; rechaza cifrados, documentos vacíos y estructura inválida detectable. |
-| Errores | 413: exceso de límites; 415: formato no admitido; 422: vacío o inválido. |
+| Actual bytes | At most 5 MiB, checked while receiving without trusting Content-Length. |
+| JPEG / PNG | At most 12 million pixels; verify and decode; reject animation. |
+| PDF | At most 3 pages; reject encryption, empty documents, and detectable structural errors. |
+| Errors | 413: limit exceeded; 415: unsupported format; 422: empty or invalid. |
 
-En `/documents/inspect`, el PDF escaneado pasa la misma inspección estructural
-que un PDF con texto. Ese endpoint no renderiza ni valida todos los streams: recibir 200
-no garantiza que un PDF pueda renderizarse ni que sea seguro o contenga un recibo.
-Un comprobante por archivo es una convención de uso, no una detección automática.
+`/documents/inspect` applies the same structural inspection to scanned and text
+PDFs. It does not render or validate every stream: 200 does not guarantee a PDF
+can render, is safe, or contains a receipt. One receipt per file is a usage
+convention, not automatic detection.
 
-El límite de píxeles se comprueba antes de decodificar imágenes. El de páginas
-requiere parsear el PDF. La inspección corre en un thread; solo el renderizado
-PDF de extracción tiene proceso separado y timeout. **No hay sandbox, límite
-duro de memoria ni control de concurrencia.** Antes de exposición pública o
-WhatsApp se necesitan límites del servidor/proxy, aislamiento de todos los parsers,
-timeout de recepción, autenticación y control de uso. No es antivirus ni sanitizador.
+Check pixel limits before image decoding; page limits require parsing the PDF.
+Inspection runs in a thread; only extraction's PDF rendering has a separate
+process and timeout. **No sandbox, hard memory limit, or concurrency control.**
+Public exposure or WhatsApp integration requires server/proxy limits, isolation
+of all parsers, receive timeouts, authentication, and usage controls. This is not
+an antivirus or sanitizer.
 
-### Ejemplos ficticios
+### Fictional examples
 
-`examples/synthetic/` contiene el mismo recibo ficticio en PNG, JPEG y PDF
-rasterizado (equivalente a escaneado), PDF con texto y un PDF inválido. Todos sin datos reales
-ni validez fiscal; prueban ingreso, no calidad de OCR. Para regenerarlos:
+`examples/synthetic/` contains the same fictional receipt as PNG, JPEG, rasterized
+(scanned-equivalent) PDF, text PDF, and an invalid PDF. They contain no real data
+and have no fiscal validity; they test ingestion, not OCR quality. Regenerate with:
 
 ```bash
 uv run python examples/generate_receipts.py
 ```
 
-## Gastos guardados (`expenses.py`, `storage.py`)
+## Saved expenses (`expenses.py`, `storage.py`)
 
-Un gasto se guarda solo cuando la persona lo confirma. **No se guardan imágenes ni
-PDF**: únicamente los datos normalizados y `document_sha256` (hash del archivo,
-para detectar el mismo documento).
+Save an expense only after human confirmation. **No images or PDFs are stored**:
+only normalized data and `document_sha256`, a file hash for duplicate detection.
 
-**Ubicación:** SQLite de la biblioteca estándar (`sqlite3`, sin dependencias nuevas)
-en la ruta de la variable `EXPENSE_LENS_DB`, por defecto `data/expenses.sqlite`
-(el directorio se crea y `data/` está en `.gitignore`). El esquema se crea al abrir
-la base. Los importes se guardan como texto decimal canónico, nunca como `float`, y
-todo el SQL es parametrizado. Los tests reemplazan la dependencia `get_db` por una
-base en un directorio temporal.
+**Storage:** standard-library SQLite (`sqlite3`, no extra dependencies) at
+`EXPENSE_LENS_DB`, defaulting to `data/expenses.sqlite`. Create the directory as
+needed; `data/` is Git-ignored. Create the schema when opening the database.
+Amounts are canonical decimal strings, never `float`, and SQL is parameterized.
+Tests override `get_db` with a database in a temporary directory.
 
-| Endpoint | Respuesta |
+| Endpoint | Response |
 |---|---|
 | `POST /expenses` | 201 `Expense` |
-| `GET /expenses?date_from&date_to&q&category&min_total&max_total&currency` | 200 `{items, totals}`; orden por fecha y luego id, descendente |
-| `GET /expenses/{id}` | 200 `Expense` o 404 `expense_not_found` |
-| `PUT /expenses/{id}` | 200 `Expense`; recalcula todo y conserva `created_at` |
-| `DELETE /expenses/{id}` | 204; borrado definitivo |
-| `GET /expenses/export.csv` (mismos filtros) | CSV UTF-8 con BOM |
+| `GET /expenses?date_from&date_to&q&category&min_total&max_total&currency` | 200 `{items, totals}`; date then id, descending |
+| `GET /expenses/{id}` | 200 `Expense` or 404 `expense_not_found` |
+| `PUT /expenses/{id}` | 200 `Expense`; recompute everything, preserve `created_at` |
+| `DELETE /expenses/{id}` | 204; permanent deletion |
+| `GET /expenses/export.csv` (same filters) | UTF-8 CSV with BOM |
 | `GET /expenses/stats` | `{count, with_extraction, correction_rate_by_field, qr_verified_rate, suggestion_acceptance}` |
 
-El cuerpo de `POST` y `PUT` es `{receipt, fiscal_qr, fiscal_qr_signature, category, extracted,
-document_sha256, allow_duplicate, category_suggestion}`. Categorías: `supermercado`, `combustible`,
-`restaurantes`, `servicios`, `transporte`, `salud`, `hogar`, `otros`.
-`extracted` es la salida normalizada original de `/receipts/extract` (o `null` si
-se cargó a mano). El modelo rechaza campos extra: **el cliente no puede enviar
-estados**; el servidor vuelve a ejecutar `review_receipt` y calcula `issues`,
-`field_status` y `movement`.
+POST/PUT bodies contain `{receipt, fiscal_qr, fiscal_qr_signature, category,
+extracted, document_sha256, allow_duplicate, category_suggestion}`.
+Categories: `supermercado`, `combustible`, `restaurantes`, `servicios`,
+`transporte`, `salud`, `hogar`, `otros`.
 
-`category_suggestion` es opcional (`null` por defecto): la sugerencia que la
-interfaz mostró. El servidor deriva `suggested` y `source` de `model` y `rules`. El
-`Expense` devuelto incluye `category_suggestion` y `suggestion_accepted`
-(`category == suggested`; `null` si no hubo sugerencia o ninguna fuente opinó). Las
-columnas nuevas (`category_suggestion` JSON y `suggestion_accepted`) se agregan a
-bases existentes con una migración idempotente (`ALTER TABLE` si faltan) que
-conserva los datos.
+`extracted` is the original normalized `/receipts/extract` output, or `null` for
+manual entry. Extra fields are rejected: **the client cannot send statuses**;
+the server reruns `review_receipt` to compute `issues`, `field_status`, and `movement`.
 
-### Errores
+Optional `category_suggestion` (default `null`) records the displayed suggestion.
+The server derives `suggested` and `source` from `model` and `rules`. Returned
+`Expense` includes `category_suggestion` and `suggestion_accepted`
+(`category == suggested`; `null` without a suggestion). Add the new
+`category_suggestion` JSON and `suggestion_accepted` columns to existing databases
+through an idempotent migration (`ALTER TABLE` when missing), preserving data.
 
-- **422 `incomplete_expense`**: tras normalizar faltan `issuer`, `date`, `currency`
-  o `total`. `detail.fields` lista los campos y no se guarda nada.
-- **409 `duplicate_expense`**: `detail.matches` lista `{id, reason}` y no se guarda
-  nada, salvo `allow_duplicate: true`, que guarda con `duplicate_of` con los ids.
+### Errors
 
-| `reason` | Condición |
+- **422 `incomplete_expense`**: normalized `issuer`, `date`, `currency`, or `total`
+  is missing. `detail.fields` lists missing fields; nothing is stored.
+- **409 `duplicate_expense`**: `detail.matches` identifies existing expenses with
+  `{id, reason, issuer, date, total, currency}`. Nothing is stored unless
+  `allow_duplicate: true`, which saves with matching ids in `duplicate_of`.
+
+| `reason` | Condition |
 |---|---|
-| `fiscal_key` | Mismo CUIT, tipo, letra, punto de venta y número, todos no nulos. Se comparan como enteros: `0001-00000001` == `00001-00000001`. |
-| `same_file` | Mismo `document_sha256`. |
-| `similar` | Misma fecha, moneda y total, y mismo CUIT (si ambos lo tienen) o mismo emisor sin distinguir mayúsculas. |
+| `fiscal_key` | Same non-null CUIT, type, letter, point of sale, and number. Compare number parts as integers: `0001-00000001` == `00001-00000001`. |
+| `same_file` | Same `document_sha256`. |
+| `similar` | Same date, currency, and total, plus same CUIT if both have one; otherwise case-insensitive issuer match. |
 
-En `PUT` el propio registro se excluye de la comparación.
+PUT excludes the record itself from duplicate comparison.
 
-### Totales, CSV y telemetría
+### Totals, CSV, and telemetry
 
-- `totals` agrupa por moneda y nunca mezcla monedas: `expenses` suma los gastos,
-  `credits` las notas de crédito, `net = expenses - credits`. Todo con `Decimal`.
-- `signed_total` es negativo en notas de crédito. El CSV usa `importe = signed_total`,
-  coma como separador y punto decimal. Las celdas de texto que empiezan con
-  `=`, `+`, `-`, `@`, tabulación o retorno de carro se prefijan con `'`
-  (inyección de fórmulas); los importes numéricos no.
-- `corrected_fields` son los campos cuyo valor final normalizado difiere de
-  `extracted` (`null` si no hubo extracción). `/expenses/stats` calcula la tasa de
-  corrección por campo sobre los gastos con extracción y la tasa de gastos con algún
-  campo `verified` por el QR fiscal sobre todos los gastos.
-- `suggestion_acceptance` es `{model, rules}`: para cada fuente, la fracción de
-  gastos con sugerencia de esa fuente cuya categoría guardada coincide con ella
-  (`null` si ninguno la tuvo).
-- Los filtros por texto e importe se aplican en Python con `Decimal`, pensando en
-  un uso local de un solo usuario; no hay autenticación ni paginación.
+- Group `totals` by currency, never mixing currencies: `expenses` sums expenses,
+  `credits` sums credit notes, `net = expenses - credits`. Use `Decimal` throughout.
+- `signed_total` is negative for credit notes. CSV uses `importe = signed_total`,
+  comma-delimited columns, and decimal points. Prefix text cells beginning with
+  `=`, `+`, `-`, `@`, tab, or carriage return with `'` to prevent formula injection;
+  numeric amounts are excluded from this transformation.
+- `corrected_fields` identifies normalized final values differing from
+  `extracted` (`null` without extraction). `/expenses/stats` computes per-field
+  correction rates over expenses with extraction, and the share of all expenses
+  containing at least one QR-verified field.
+- `suggestion_acceptance` is `{model, rules}`: per source, the fraction of expenses
+  whose saved category matches that source's suggestion (`null` without samples).
+- Text and amount filters run in Python with `Decimal`, targeting local single-user
+  use. There is no authentication or pagination.
 
-## Canales de ingreso previstos
+## Planned input channels
 
-Separaremos el canal de ingreso del procesamiento:
+Separate ingestion from processing:
 
 ```text
-Web (primero) ────────────┐
-                         ├─ validar archivo → extraer → validar datos → revisar
-WhatsApp (futuro) ────────┘
+Web (first) ──────────────┐
+                         ├─ inspect file → extract → validate data → review
+WhatsApp (future) ────────┘
 ```
 
-El procesamiento no dependerá de objetos HTTP ni de mensajes de WhatsApp.
-La futura integración será un Adapter de entrada, no otro extractor.
-Por ahora no hay conexión, webhook, descarga ni envío de mensajes.
+Processing should not depend on HTTP objects or WhatsApp messages. A future
+integration would be an input Adapter, not a second extractor. There is currently
+no connection, webhook, attachment download, or messaging integration.
 
-El contenido documental se tratará como dato no confiable, no como instrucciones
-para el futuro modelo. No se habilitan ZIP, documentos Office ni URLs arbitrarias.
+Treat document content as untrusted data, not model instructions. ZIP archives,
+Office files, and arbitrary URLs are unsupported.
 
-WhatsApp requerirá además autenticación del webhook, control de acceso a los
-adjuntos, deduplicación de eventos y una política de retención y borrado.
-El envío de comprobantes a un proveedor externo se informará explícitamente.
-No implementar estos controles todavía no habilita un despliegue público.
-
+WhatsApp would additionally require webhook authentication, attachment access
+controls, event deduplication, and retention/deletion policies. Explicitly inform
+users when sending documents to an external provider. Missing these controls does
+not authorize public deployment.

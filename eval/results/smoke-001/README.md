@@ -1,39 +1,28 @@
-# Primera prueba real: dos respuestas y dos límites del proveedor
+# First real-world test: two responses and two provider limits
 
-Se enviaron cuatro formatos del **mismo comprobante ficticio** a Groq, una vez
-cada uno, sin retries ni reparación. No es un benchmark ni una estimación de
-exactitud para facturas reales.
+Four formats of the **same fictional receipt** were sent to Groq once each, with no retries or repair. This is not a benchmark or an estimate of accuracy on real invoices.
 
-| Entrada | Resultado | Campos coincidentes |
+| Input | Result | Matching fields |
 |---|---|---|
-| PNG | HTTP 429 del proveedor | No evaluables |
-| JPEG | Respuesta válida | 7 de 7 |
-| PDF con texto | Respuesta válida | 7 de 7 |
-| PDF escaneado | HTTP 429 del proveedor | No evaluables |
+| PNG | Provider HTTP 429 | Not evaluable |
+| JPEG | Valid response | 7 of 7 |
+| PDF with text | Valid response | 7 of 7 |
+| Scanned PDF | Provider HTTP 429 | Not evaluable |
 
-Los fallos 429 no prueban problemas de lectura de esos formatos. Tampoco las dos
-respuestas correctas prueban generalización: el contenido, formato y valores son
-simples, sintéticos y equivalentes. No se probó extracción multipágina real.
+The 429 failures do not demonstrate reading problems with those formats. Nor do the two correct responses demonstrate generalization: the content, format, and values are simple, synthetic, and equivalent. Real multipage extraction was not tested.
 
-## Evidencia
+## Evidence
 
-- `plan.json`: modelo, hash del prompt, hashes de entradas y valores esperados
-  fijados antes de ejecutar.
-- `attempts.jsonl`: cuatro intentos, latencias, errores sanitizados, respuestas
-  validadas y uso informado. No contiene claves ni headers.
-- Modelo que respondió: `qwen/qwen3.8-27b`.
-- Tokens conocidos de dos respuestas: 4.128 de entrada y 198 de salida.
-  El uso de los otros dos intentos es desconocido, no cero. Sin cálculo monetario.
-- El runner terminó con exit 0 porque completó la captura, **no porque todas las
-  llamadas fueran exitosas**. No se reintentaron ni reemplazaron los errores.
+- `plan.json`: model, prompt hash, input hashes, and expected values fixed before execution.
+- `attempts.jsonl`: four attempts, latencies, sanitized errors, validated responses, and reported usage. It contains no keys or headers.
+- Model that responded: `qwen/qwen3.8-27b`.
+- Known tokens for two responses: 4,128 input and 198 output. Usage for the other two attempts is unknown, not zero. No cost calculation.
+- The runner exited with status 0 because capture completed, **not because every call succeeded**. Errors were neither retried nor replaced.
 
-## Cambio derivado
+## Follow-up change
 
-Después de esta captura, HTTP 429 tiene un error distinguible:
-`503 provider_rate_limited`. La evidencia original conserva `provider_error`,
-que era el contrato al ejecutarla. La aplicación no reintenta automáticamente.
+After this capture, HTTP 429 was given a distinguishable error: `503 provider_rate_limited`. The original evidence retains `provider_error`, which was the contract at the time. The application does not retry automatically.
 
-Continuar con carga, vista previa y revisión manual; ampliar la evaluación con
-casos variados en otra tanda autorizada, sin reutilizar esto como un holdout.
+Continue with upload, preview, and manual review; expand the evaluation with varied cases in another authorized run, without reusing this set as a holdout.
 
-Su runner vivió en el commit `466bbfa` (`eval/smoke.py`); fue reemplazado por `eval/run.py` y `eval/score.py`.
+Its runner lived in commit `466bbfa` (`eval/smoke.py`); it was replaced by `eval/run.py` and `eval/score.py`.
