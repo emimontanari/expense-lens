@@ -194,8 +194,13 @@ Desde esta carpeta:
 
 ```bash
 uv sync --locked
-EXPENSE_LENS_SECRET='secreto-aleatorio-largo-y-estable' uv run --env-file .env uvicorn expense_lens.main:app --reload --host 127.0.0.1
+# Una sola vez: un secreto propio para firmar el QR fiscal, guardado en .env.
+echo "EXPENSE_LENS_SECRET=$(uv run python -c 'import secrets; print(secrets.token_hex(32))')" >> .env
+uv run --env-file .env uvicorn expense_lens.main:app --reload --host 127.0.0.1
 ```
+
+`.env` está ignorado por Git: nunca publiques ese secreto. Si falta, el servidor
+usa uno al azar por proceso y, al reiniciarlo, hay que volver a extraer.
 
 - Salud: <http://127.0.0.1:8000/health>
 - Documentación interactiva: <http://127.0.0.1:8000/docs>
@@ -229,7 +234,7 @@ El arranque anterior deja la extracción deshabilitada. Para habilitarla
 explícitamente, reemplazá el comando del servidor por:
 
 ```bash
-EXPENSE_LENS_SECRET='secreto-aleatorio-largo-y-estable' EXPENSE_LENS_ENABLE_GROQ=1 uv run --env-file .env uvicorn expense_lens.main:app --reload --host 127.0.0.1
+EXPENSE_LENS_ENABLE_GROQ=1 uv run --env-file .env uvicorn expense_lens.main:app --reload --host 127.0.0.1
 ```
 
 Cada extracción autorizada puede consumir cuota del proveedor. El consentimiento
