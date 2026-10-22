@@ -526,3 +526,27 @@ def test_committed_older_results_still_score(tmp_path, name):
         metrics = score_module.main([str(tmp_path), *flags])
         assert metrics["category_accuracy"]["model"] is None
         assert metrics["category_accuracy"]["rules"] is None
+
+
+def test_runner_keeps_the_raw_model_output(tmp_path, provider):
+    """Sin la transcripción cruda no se pueden medir reglas nuevas después."""
+    out = tmp_path / "out"
+    run_module.main([str(out), "--allow-provider"])
+    for attempt in read_attempts(out):
+        output = attempt["model_output"]
+        assert set(output) == set(RawReceipt.model_fields) | {"category"}
+
+
+def test_replay_prefers_the_raw_model_output():
+    """La corrida vieja guardó total null; la transcripción cruda tenía "1.234"."""
+    raw = {**dict.fromkeys(RawReceipt.model_fields), "category": None}
+    raw.update(issuer="Kiosco", currency="PESOS", total="1.234")
+    transcribed = {k: v for k, v in raw.items() if k != "category"}
+    stored = review_receipt(RawReceipt.model_validate({**transcribed, "total": None}))
+    attempt = {
+        "case": "c1",
+        "result": stored.model_dump(mode="json"),
+        "model_output": raw,
+    }
+    [replayed] = score_module.replay_rules([attempt])
+    assert replayed["result"]["receipt"]["total"] == "1234"

@@ -49,6 +49,27 @@ def required_fields(receipt: Receipt) -> tuple[FieldName, ...]:
     return required
 
 
+# Formato por defecto según la moneda del comprobante: pesos y euros usan coma
+# decimal; dólares, punto.
+CURRENCY_DECIMAL = {"ARS": ",", "EUR": ",", "USD": "."}
+
+
+def number_style(raw: RawReceipt) -> str | None:
+    """Separador decimal del comprobante, para resolver importes como "1.234".
+
+    Primero la evidencia de sus propios importes inequívocos ("1.000,00"); si
+    se contradicen, no hay estilo. Sin importes que opinen, decide la moneda
+    leída del documento. Sin moneda conocida, el importe sigue ambiguo.
+    """
+    styles = {
+        decimal_separator(value) for value in (raw.subtotal, raw.tax, raw.total)
+    } - {None}
+    if styles:
+        return styles.pop() if len(styles) == 1 else None
+    currency, _ = normalize_currency(raw.currency)
+    return CURRENCY_DECIMAL.get(currency or "")
+
+
 def normalize_receipt(raw: RawReceipt) -> tuple[Receipt, list[ValidationIssue]]:
     issues: list[ValidationIssue] = []
 
@@ -58,12 +79,7 @@ def normalize_receipt(raw: RawReceipt) -> tuple[Receipt, list[ValidationIssue]]:
             issues.append(issue(code, field))
         return value
 
-    # Evidencia del propio documento: si todos los importes inequívocos usan el
-    # mismo separador decimal, ese es el estilo del comprobante.
-    styles = {
-        decimal_separator(value) for value in (raw.subtotal, raw.tax, raw.total)
-    } - {None}
-    hint = styles.pop() if len(styles) == 1 else None
+    hint = number_style(raw)
 
     receipt = Receipt.model_validate(
         {
