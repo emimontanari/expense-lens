@@ -19,8 +19,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, ConfigDict, StringConstraints
 
 from expense_lens import storage
+from expense_lens.categories import Category
 from expense_lens.receipts import (
     FIELDS,
+    CategorySuggestion,
     Currency,
     FieldName,
     FieldStatus,
@@ -32,16 +34,6 @@ from expense_lens.receipts import (
 from expense_lens.rules import BASE_REQUIRED, review_receipt
 from expense_lens.storage import get_db
 
-Category = Literal[
-    "supermercado",
-    "combustible",
-    "restaurantes",
-    "servicios",
-    "transporte",
-    "salud",
-    "hogar",
-    "otros",
-]
 Sha256 = Annotated[str, StringConstraints(pattern=r"^[0-9a-fA-F]{64}$")]
 DuplicateReason = Literal["fiscal_key", "same_file", "similar"]
 Movement = Literal["expense", "credit", "unknown"]
@@ -56,6 +48,7 @@ class ExpenseInput(BaseModel):
     extracted: Receipt | None = None
     document_sha256: Sha256 | None = None
     allow_duplicate: bool = False
+    category_suggestion: CategorySuggestion | None = None
 
 
 class Expense(BaseModel):
@@ -72,6 +65,8 @@ class Expense(BaseModel):
     corrected_fields: list[FieldName] | None
     document_sha256: str | None
     duplicate_of: list[int]
+    category_suggestion: CategorySuggestion | None
+    suggestion_accepted: bool | None
 
 
 class CurrencyTotals(BaseModel):
@@ -87,11 +82,17 @@ class ExpenseList(BaseModel):
     totals: list[CurrencyTotals]
 
 
+class SuggestionAcceptance(BaseModel):
+    model: float | None
+    rules: float | None
+
+
 class ExpenseStats(BaseModel):
     count: int
     with_extraction: int
     correction_rate_by_field: dict[FieldName, float]
     qr_verified_rate: float | None
+    suggestion_acceptance: SuggestionAcceptance
 
 
 Db = Annotated[sqlite3.Connection, Depends(get_db)]
@@ -185,6 +186,19 @@ def is_similar(row: sqlite3.Row, receipt: Receipt) -> bool:
     return row["issuer"].casefold() == (receipt.issuer or "").casefold()
 
 
+def normalized_suggestion(
+    sent: CategorySuggestion | None,
+) -> CategorySuggestion | None:
+    """`suggested` y `source` se derivan en el servidor de `model` y `rules`."""
+    return None if sent is None else CategorySuggestion.of(sent.model, sent.rules)
+
+
+def accepted(category: str, suggestion: CategorySuggestion | None) -> int | None:
+    if suggestion is None or suggestion.suggested is None:
+        return None
+    return int(category == suggestion.suggested)
+
+
 def persist(
     conn: sqlite3.Connection, body: ExpenseInput, expense_id: int | None
 ) -> sqlite3.Row:
@@ -213,6 +227,7 @@ def persist(
                 detail={"code": "duplicate_expense", "matches": matches},
             )
         corrected = corrected_fields(receipt, body.extracted)
+        suggestion = normalized_suggestion(body.category_suggestion)
         values: dict[str, object] = {
             "created_at": now,
             "updated_at": now,
@@ -236,6 +251,10 @@ def persist(
             "document_sha256": sha,
             "duplicate_of": json.dumps([m["id"] for m in matches]),
             "fiscal_key": key,
+            "category_suggestion": None
+            if suggestion is None
+            else suggestion.model_dump_json(),
+            "suggestion_accepted": accepted(body.category, suggestion),
         }
         if expense_id is None:
             expense_id = storage.insert(conn, values)
@@ -259,6 +278,7 @@ def to_expense(row: sqlite3.Row) -> Expense:
         }
     )
     corrected = row["corrected_fields"]
+    stored, flag = row["category_suggestion"], row["suggestion_accepted"]
     return Expense(
         id=row["id"],
         created_at=row["created_at"],
@@ -273,6 +293,8 @@ def to_expense(row: sqlite3.Row) -> Expense:
         corrected_fields=None if corrected is None else json.loads(corrected),
         document_sha256=row["document_sha256"],
         duplicate_of=json.loads(row["duplicate_of"]),
+        category_suggestion=None if stored is None else json.loads(stored),
+        suggestion_accepted=None if flag is None else bool(flag),
     )
 
 
@@ -389,11 +411,27 @@ def export_csv(conn: Db, f: Annotated[Filters, Depends(read_filters)]) -> Respon
     )
 
 
+def acceptance(rows: list[sqlite3.Row], source: Literal["model", "rules"]):
+    """Tasa de gastos cuya categoría coincide con la sugerida por esa fuente."""
+    suggested = [
+        (r["category"], json.loads(r["category_suggestion"])[source])
+        for r in rows
+        if r["category_suggestion"] is not None
+    ]
+    suggested = [(chosen, value) for chosen, value in suggested if value is not None]
+    if not suggested:
+        return None
+    return round(
+        sum(chosen == value for chosen, value in suggested) / len(suggested), 4
+    )
+
+
 @router.get("/stats", response_model=ExpenseStats)
 def expense_stats(conn: Db) -> ExpenseStats:
     """Cuánto corrige la persona a la extracción, por campo."""
     rows = conn.execute(
-        "SELECT corrected_fields, fiscal_qr_verified FROM expenses"
+        "SELECT corrected_fields, fiscal_qr_verified, category, category_suggestion"
+        " FROM expenses"
     ).fetchall()
     extracted = [
         json.loads(r["corrected_fields"])
@@ -413,6 +451,9 @@ def expense_stats(conn: Db) -> ExpenseStats:
         with_extraction=with_extraction,
         correction_rate_by_field=rates,
         qr_verified_rate=verified / len(rows) if rows else None,
+        suggestion_acceptance=SuggestionAcceptance(
+            model=acceptance(rows, "model"), rules=acceptance(rows, "rules")
+        ),
     )
 
 

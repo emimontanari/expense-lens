@@ -60,7 +60,7 @@ describe('confirm expense', () => {
     const body = JSON.parse(callsTo(fetch, 'POST', '/expenses')[0][1].body);
     expect(body).toEqual({
       receipt: { ...receipt, issuer: 'Cafe Uno' }, fiscal_qr: null, category: 'restaurantes',
-      extracted: receipt, document_sha256: expect.stringMatching(/^[0-9a-f]{64}$/), allow_duplicate: false,
+      extracted: receipt, document_sha256: expect.stringMatching(/^[0-9a-f]{64}$/), allow_duplicate: false, category_suggestion: null,
     });
     await waitFor(() => expect(callsTo(fetch, 'GET', '/expenses').length).toBe(2));
   });
@@ -86,6 +86,67 @@ describe('confirm expense', () => {
     render(<AppShell />); await reviewed();
     fireEvent.click(screen.getByRole('button', { name: 'Confirmar gasto' }));
     expect(await screen.findByText(/faltan datos obligatorios.*fecha, total/i)).toBeTruthy();
+  });
+});
+
+const suggestion = (over: object = {}) => ({ model: 'combustible', rules: 'supermercado', suggested: 'combustible', source: 'model', ...over });
+const categorySelect = () => screen.getByLabelText('Categoría del gasto') as HTMLSelectElement;
+
+describe('category suggestion', () => {
+  it('preselects the model suggestion with the AI chip', async () => {
+    route({ 'POST /receipts/extract': () => ok({ ...extractResult, category_suggestion: suggestion() }) });
+    render(<AppShell />); await reviewed();
+    expect(categorySelect().value).toBe('combustible');
+    expect(screen.getByText('Sugerida por IA')).toBeTruthy();
+  });
+  it('preselects the rules suggestion with the rules chip', async () => {
+    route({ 'POST /receipts/extract': () => ok({ ...extractResult, category_suggestion: suggestion({ model: null, suggested: 'supermercado', source: 'rules' }) }) });
+    render(<AppShell />); await reviewed();
+    expect(categorySelect().value).toBe('supermercado');
+    expect(screen.getByText('Sugerida por reglas')).toBeTruthy();
+  });
+  it('hides the chip when another category is chosen and posts the original suggestion', async () => {
+    const fetch = route({ 'POST /receipts/extract': () => ok({ ...extractResult, category_suggestion: suggestion() }) });
+    render(<AppShell />); await reviewed();
+    fireEvent.change(categorySelect(), { target: { value: 'hogar' } });
+    expect(screen.queryByText('Sugerida por IA')).toBeNull();
+    fireEvent.change(categorySelect(), { target: { value: 'combustible' } });
+    expect(screen.getByText('Sugerida por IA')).toBeTruthy();
+    fireEvent.change(categorySelect(), { target: { value: 'hogar' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Confirmar gasto' }));
+    expect(await screen.findByText(/gasto guardado/i)).toBeTruthy();
+    const body = JSON.parse(callsTo(fetch, 'POST', '/expenses')[0][1].body);
+    expect(body.category).toBe('hogar');
+    expect(body.category_suggestion).toEqual(suggestion());
+  });
+  it('keeps the default and posts null without a suggestion', async () => {
+    const fetch = route(); render(<AppShell />); await reviewed();
+    expect(categorySelect().value).toBe('otros');
+    expect(screen.queryByText(/sugerida por/i)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Confirmar gasto' }));
+    await screen.findByText(/gasto guardado/i);
+    expect(JSON.parse(callsTo(fetch, 'POST', '/expenses')[0][1].body).category_suggestion).toBeNull();
+  });
+  it('resets the preselection on re-extraction', async () => {
+    let calls = 0;
+    route({ 'POST /receipts/extract': () => ok({ ...extractResult, category_suggestion: calls++ === 0 ? suggestion() : suggestion({ model: 'salud', suggested: 'salud' }) }) });
+    render(<AppShell />); await reviewed();
+    fireEvent.change(categorySelect(), { target: { value: 'hogar' } });
+    fireEvent.click(screen.getByRole('button', { name: /extraer/i }));
+    await waitFor(() => expect(categorySelect().value).toBe('salud'));
+    expect(screen.getByText('Sugerida por IA')).toBeTruthy();
+  });
+  it('shows acceptance per source with n/a for null', async () => {
+    route({ 'GET /expenses/stats': () => ok({ ...stats, suggestion_acceptance: { model: 0.8, rules: null } }) });
+    render(<AppShell />);
+    const card = within(await screen.findByLabelText('Correcciones'));
+    expect(card.getByText(/aceptación de la sugerencia/i).textContent).toBe('Aceptación de la sugerencia: IA 80% · reglas n/a');
+  });
+  it('marks expenses whose suggestion was not accepted', async () => {
+    route({ 'GET /expenses': () => ok({ ...list, items: [expense(1, { suggestion_accepted: false }), expense(2, { suggestion_accepted: true })] }) });
+    render(<AppShell />);
+    await screen.findAllByText('Cafe');
+    expect(screen.getAllByText(/categoría cambiada/i)).toHaveLength(1);
   });
 });
 

@@ -27,6 +27,12 @@ export type FiscalQr = {
   authorization_code: string;
 };
 export type Issue = { code: string; field: string; severity?: 'warning' | 'info' };
+export type CategorySuggestion = {
+  model: Category | null;
+  rules: Category | null;
+  suggested: Category | null;
+  source: 'model' | 'rules' | null;
+};
 export type Result = {
   receipt: Receipt;
   issues: Issue[];
@@ -34,6 +40,7 @@ export type Result = {
   movement?: 'expense' | 'credit' | 'unknown';
   fiscal_qr?: FiscalQr | null;
   fiscal_qr_status?: 'found' | 'not_found' | 'invalid' | null;
+  category_suggestion?: CategorySuggestion | null;
   requires_human_review: boolean;
 };
 export type ApiError = { detail?: string | { code?: string }; code?: string };
@@ -116,6 +123,7 @@ export type ExpenseInput = {
   extracted: Receipt | null;
   document_sha256: string | null;
   allow_duplicate: boolean;
+  category_suggestion?: CategorySuggestion | null;
 };
 export type DuplicateReason = 'fiscal_key' | 'same_file' | 'similar';
 export type DuplicateMatch = {
@@ -140,6 +148,8 @@ export type Expense = {
   corrected_fields: FieldName[] | null;
   document_sha256: string | null;
   duplicate_of: number[];
+  category_suggestion?: CategorySuggestion | null;
+  suggestion_accepted?: boolean | null;
 };
 export type CurrencyTotals = { currency: string; expenses: string; credits: string; net: string; count: number };
 export type ExpenseList = { items: Expense[]; totals: CurrencyTotals[] };
@@ -148,6 +158,7 @@ export type ExpenseStats = {
   with_extraction: number;
   correction_rate_by_field: Partial<Record<FieldName, number>>;
   qr_verified_rate: number | null;
+  suggestion_acceptance?: { model: number | null; rules: number | null };
 };
 export type ExpenseFilters = {
   date_from: string; date_to: string; q: string; category: string;

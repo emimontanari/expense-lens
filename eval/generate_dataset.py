@@ -137,13 +137,18 @@ def case(
     filename,
     content,
     receipt,
+    category,
     *,
     qr_status="not_found",
     flagged=(),
     movement="expense",
     note,
 ):
-    """Verdad normalizada tal como la entrega el pipeline (importes con 2 decimales)."""
+    """Verdad normalizada tal como la entrega el pipeline (importes con 2 decimales).
+
+    `category` es la categoría que un humano asignaría según el detalle visible;
+    None si el documento no es un comprobante.
+    """
     expected = Receipt.model_validate({**PRESENT, **receipt})
     return {
         "id": case_id,
@@ -155,6 +160,7 @@ def case(
             "fiscal_qr_status": qr_status,
             "flagged_fields": list(flagged),
             "movement": movement,
+            "category": category,
         },
     }
 
@@ -198,6 +204,7 @@ def build_cases() -> list[dict]:
                 "tax": "2100.00",
                 "total": "12100.00",
             },
+            "otros",
             qr_status="found",
             note="Factura A cuyo QR coincide con lo visible.",
         )
@@ -246,6 +253,7 @@ def build_cases() -> list[dict]:
                 "tax": "4200.00",
                 "total": "24200.00",
             },
+            "servicios",
             qr_status="found",
             flagged=["total"],
             note="El QR declara 2.420,00 pero el total visible es 24.200,00.",
@@ -286,6 +294,7 @@ def build_cases() -> list[dict]:
                 "tax": "2100.00",
                 "total": "12100.00",
             },
+            "hogar",
             flagged=["subtotal"],
             note="El IVA ya esta incluido: subtotal igual al total con IVA.",
         )
@@ -321,6 +330,7 @@ def build_cases() -> list[dict]:
                 "currency": "ARS",
                 "total": "8500.00",
             },
+            "otros",
             note="Factura C sin IVA discriminado.",
         )
     )
@@ -358,6 +368,7 @@ def build_cases() -> list[dict]:
                 "currency": "ARS",
                 "total": "1234.56",
             },
+            "supermercado",
             note="Importes con separadores argentinos; total distinto de vuelto "
             "y de lo entregado.",
         )
@@ -404,6 +415,7 @@ def build_cases() -> list[dict]:
                 "tax": "525.00",
                 "total": "3025.00",
             },
+            "otros",
             qr_status="found",
             movement="credit",
             note="Nota de credito: no es una compra comun.",
@@ -441,6 +453,7 @@ def build_cases() -> list[dict]:
                 "currency": "USD",
                 "total": "1250.00",
             },
+            "otros",
             note="Importe en dolares: no se convierte a pesos.",
         )
     )
@@ -478,6 +491,7 @@ def build_cases() -> list[dict]:
                 "currency": "ARS",
                 "total": "4320.50",
             },
+            "otros",
             note="Foto inclinada 7 grados y borrosa.",
         )
     )
@@ -518,6 +532,7 @@ def build_cases() -> list[dict]:
                 "currency": "ARS",
                 "total": "15750.00",
             },
+            "otros",
             note="Dos paginas; el parcial de la pagina 1 no es el total.",
         )
     )
@@ -550,6 +565,7 @@ def build_cases() -> list[dict]:
                 "letter": "C",
                 "currency": "ARS",
             },
+            "otros",
             flagged=["total"],
             note='"1.234" puede ser 1234 o 1,234: la verdad es null, no se adivina.',
         )
@@ -568,6 +584,7 @@ def build_cases() -> list[dict]:
             "no_es_comprobante.png",
             png(scene),
             {},
+            None,
             movement="unknown",
             note="Imagen sin datos de comprobante: todo debe quedar en null.",
         )
@@ -607,6 +624,7 @@ def build_cases() -> list[dict]:
                 "currency": "ARS",
                 "total": "3900.00",
             },
+            "restaurantes",
             note="Texto en la imagen que intenta dar ordenes al modelo.",
         )
     )

@@ -1,19 +1,22 @@
 import { useState } from 'react';
 import { ExpenseApiError, saveExpense, sha256Hex } from './api';
 import { categories, categoryLabels, duplicateReasonText, labels } from './model';
-import type { Category, DuplicateMatch, FieldName, Receipt, Result } from './model';
+import type { Category, CategorySuggestion, DuplicateMatch, FieldName, Receipt, Result } from './model';
 
 type Props = {
   file: File | null;
   result: Result;
   /** Receipt exactly as /receipts/extract returned it; kept even when the user edits the form. */
   extracted: Receipt | null;
+  /** Suggestion from /receipts/extract; validate only carries the rules one, so this takes precedence. */
+  extractedSuggestion?: CategorySuggestion | null;
   disabled: boolean;
   onSaved: () => void;
 };
 
-export function ExpenseConfirm({ file, result, extracted, disabled, onSaved }: Props) {
-  const [category, setCategory] = useState<Category>('otros');
+export function ExpenseConfirm({ file, result, extracted, extractedSuggestion = null, disabled, onSaved }: Props) {
+  const suggestion = extractedSuggestion ?? result.category_suggestion ?? null;
+  const [category, setCategory] = useState<Category>(extractedSuggestion?.suggested ?? 'otros');
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
@@ -33,6 +36,7 @@ export function ExpenseConfirm({ file, result, extracted, disabled, onSaved }: P
         extracted,
         document_sha256: file ? await sha256Hex(file) : null,
         allow_duplicate: allowDuplicate,
+        category_suggestion: suggestion,
       });
       setSaved(true);
       onSaved();
@@ -58,6 +62,9 @@ export function ExpenseConfirm({ file, result, extracted, disabled, onSaved }: P
           {categories.map(value => <option key={value} value={value}>{categoryLabels[value]}</option>)}
         </select>
       </label>
+      {suggestion?.suggested && suggestion.source && category === suggestion.suggested && (
+        <span className="badge badge-suggestion">{suggestion.source === 'model' ? 'Sugerida por IA' : 'Sugerida por reglas'}</span>
+      )}
       <button className="primary" disabled={disabled || saving || saved} onClick={() => submit(false)}>
         {saving ? 'Guardando…' : 'Confirmar gasto'}
       </button>
