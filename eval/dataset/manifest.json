@@ -236,7 +236,7 @@
     {
       "id": "importe_ambiguo",
       "file": "importe_ambiguo.png",
-      "note": "\"1.234\" puede ser 1234 o 1,234: la verdad es null, no se adivina.",
+      "note": "\"1.234\" en un comprobante en pesos son miles: 1234, con aviso.",
       "expected": {
         "receipt": {
           "issuer": "Kiosco Dudoso",
@@ -248,12 +248,10 @@
           "currency": "ARS",
           "subtotal": null,
           "tax": null,
-          "total": null
+          "total": "1234"
         },
         "fiscal_qr_status": "not_found",
-        "flagged_fields": [
-          "total"
-        ],
+        "flagged_fields": [],
         "movement": "expense",
         "category": "otros"
       },

@@ -9,6 +9,7 @@ from datetime import date
 from expense_lens.categories import suggest_by_rules
 from expense_lens.fiscal_qr import compare_with_qr
 from expense_lens.normalize import (
+    decimal_separator,
     normalize_amount,
     normalize_cuit,
     normalize_currency,
@@ -31,6 +32,7 @@ BASE_REQUIRED: tuple[FieldName, ...] = ("issuer", "date", "currency", "total")
 FISCAL_REQUIRED: tuple[FieldName, ...] = ("issuer_cuit", "number", "letter")
 FISCAL_TYPES = {"factura", "nota_credito", "nota_debito"}
 INFO_CODES: set[IssueCode] = {
+    "amount_interpreted_from_document",
     "credit_note",
     "foreign_currency",
     "currency_inferred_from_symbol",
@@ -47,6 +49,27 @@ def required_fields(receipt: Receipt) -> tuple[FieldName, ...]:
     return required
 
 
+# Formato por defecto según la moneda del comprobante: pesos y euros usan coma
+# decimal; dólares, punto.
+CURRENCY_DECIMAL = {"ARS": ",", "EUR": ",", "USD": "."}
+
+
+def number_style(raw: RawReceipt) -> str | None:
+    """Separador decimal del comprobante, para resolver importes como "1.234".
+
+    Primero la evidencia de sus propios importes inequívocos ("1.000,00"); si
+    se contradicen, no hay estilo. Sin importes que opinen, decide la moneda
+    leída del documento. Sin moneda conocida, el importe sigue ambiguo.
+    """
+    styles = {
+        decimal_separator(value) for value in (raw.subtotal, raw.tax, raw.total)
+    } - {None}
+    if styles:
+        return styles.pop() if len(styles) == 1 else None
+    currency, _ = normalize_currency(raw.currency)
+    return CURRENCY_DECIMAL.get(currency or "")
+
+
 def normalize_receipt(raw: RawReceipt) -> tuple[Receipt, list[ValidationIssue]]:
     issues: list[ValidationIssue] = []
 
@@ -55,6 +78,8 @@ def normalize_receipt(raw: RawReceipt) -> tuple[Receipt, list[ValidationIssue]]:
         if code:
             issues.append(issue(code, field))
         return value
+
+    hint = number_style(raw)
 
     receipt = Receipt.model_validate(
         {
@@ -65,9 +90,9 @@ def normalize_receipt(raw: RawReceipt) -> tuple[Receipt, list[ValidationIssue]]:
             "document_type": raw.document_type,
             "letter": raw.letter,
             "currency": keep("currency", normalize_currency(raw.currency)),
-            "subtotal": keep("subtotal", normalize_amount(raw.subtotal)),
-            "tax": keep("tax", normalize_amount(raw.tax)),
-            "total": keep("total", normalize_amount(raw.total)),
+            "subtotal": keep("subtotal", normalize_amount(raw.subtotal, hint)),
+            "tax": keep("tax", normalize_amount(raw.tax, hint)),
+            "total": keep("total", normalize_amount(raw.total, hint)),
         }
     )
     return receipt, issues

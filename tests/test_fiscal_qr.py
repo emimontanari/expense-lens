@@ -208,7 +208,7 @@ def test_validate_rechecks_corrections_against_returned_qr():
         response = client.post(
             "/receipts/validate",
             json={
-                "receipt": {**TRANSCRIBED, "total": "12.100"},
+                "receipt": {**TRANSCRIBED, "total": "12.000,00"},
                 "fiscal_qr": qr,
                 "fiscal_qr_signature": sign_qr(parsed_qr),
             },
@@ -251,3 +251,26 @@ def test_signed_qr_round_trip_keeps_fields_verified_when_saved(extract, tmp_path
             assert saved.json()["fiscal_qr_verified"] is True
     finally:
         app.dependency_overrides.clear()
+
+
+def test_qr_confirms_a_total_interpreted_from_the_document():
+    """ "12.100" con importes en coma decimal se lee 12100 y el QR lo confirma."""
+    parsed_qr = parse_fiscal_qr(qr_url())
+    assert parsed_qr is not None
+    with TestClient(app) as client:
+        response = client.post(
+            "/receipts/validate",
+            json={
+                "receipt": {**TRANSCRIBED, "total": "12.100"},
+                "fiscal_qr": parsed_qr.model_dump(mode="json"),
+                "fiscal_qr_signature": sign_qr(parsed_qr),
+            },
+        )
+    result = response.json()
+    assert result["receipt"]["total"] == "12100"
+    assert result["field_status"]["total"] == "verified"
+    assert {
+        "code": "amount_interpreted_from_document",
+        "field": "total",
+        "severity": "info",
+    } in result["issues"]

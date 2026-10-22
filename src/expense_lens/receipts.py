@@ -100,6 +100,7 @@ FIELDS: tuple[FieldName, ...] = FieldName.__args__
 IssueCode = Literal[
     "missing_field",
     "ambiguous_amount",
+    "amount_interpreted_from_document",
     "unparseable_amount",
     "invalid_date",
     "unknown_currency",
