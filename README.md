@@ -65,6 +65,9 @@ lógica de negocio (`normalize.py`, `rules.py`, `fiscal_qr.py`) no lo conoce.
 - **El documento es dato no confiable.** Instrucciones escritas en la imagen se
   ignoran, y el QR también se valida estrictamente (host oficial, versión,
   dígito verificador del CUIT). Hay un caso de inyección en el dataset.
+- **El QR devuelto al cliente lleva firma HMAC.** El servidor rechaza QR sin
+  firma o alterados antes de marcarlos verificados; `EXPENSE_LENS_SECRET` debe
+  ser estable para que sobrevivan reinicios.
 - **Fallar visible y acotado.** Una llamada por solicitud, sin reintentos;
   un HTTP 429 se informa como tal. El modelo nunca es la única defensa.
 - **Las correcciones humanas son datos.** Cada gasto guarda qué campos cambió
@@ -191,8 +194,13 @@ Desde esta carpeta:
 
 ```bash
 uv sync --locked
+# Una sola vez: un secreto propio para firmar el QR fiscal, guardado en .env.
+echo "EXPENSE_LENS_SECRET=$(uv run python -c 'import secrets; print(secrets.token_hex(32))')" >> .env
 uv run --env-file .env uvicorn expense_lens.main:app --reload --host 127.0.0.1
 ```
+
+`.env` está ignorado por Git: nunca publiques ese secreto. Si falta, el servidor
+usa uno al azar por proceso y, al reiniciarlo, hay que volver a extraer.
 
 - Salud: <http://127.0.0.1:8000/health>
 - Documentación interactiva: <http://127.0.0.1:8000/docs>

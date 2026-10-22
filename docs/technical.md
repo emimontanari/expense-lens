@@ -82,6 +82,16 @@ Las facturas electrónicas argentinas incluyen un QR (RG 4892/2020) con el texto
   su valor campo por campo, como acción explícita de la persona.
 - Un QR válido no prueba que el comprobante sea auténtico: no se consulta a ARCA.
 
+## QR firmado (HMAC)
+
+El QR se extrae en el servidor, pero la interfaz devuelve al cliente los datos del QR para que pueda pedir una nueva validación o confirmar el gasto. Sin una prueba, un cliente podría inventar un QR y obtener campos `verified` (“Verificado por QR”). Por eso el servidor firma el QR extraído antes de entregarlo.
+
+La firma es HMAC-SHA-256 sobre la serialización JSON canónica del modelo normalizado (`sort_keys`, separadores compactos y UTF-8). `/receipts/extract` entrega `fiscal_qr_signature`; `/receipts/validate` y `/expenses` verifican que corresponda exactamente al QR recibido, usando comparación de tiempo constante. Un QR alterado, una firma ausente o una firma inventada producen HTTP 422 `fiscal_qr_signature_invalid`. `fiscal_qr: null` no requiere firma. La verificación ocurre en la capa HTTP; `review_receipt` permanece independiente.
+
+Configura `EXPENSE_LENS_SECRET` con un secreto aleatorio fuerte y estable en el entorno del servidor. Si no está configurado, el proceso genera un secreto aleatorio en memoria: una firma emitida antes de reiniciar dejará de ser válida después del reinicio, y habrá que volver a extraer el comprobante. No uses esta configuración efímera en un despliegue que necesite conservar solicitudes en curso.
+
+Esto evita falsificar firmas sin conocer el secreto; no demuestra que ARCA haya emitido el comprobante ni sustituye autenticación o controles de acceso.
+
 ## Extraer un comprobante con Groq (opt-in, solo local)
 
 `POST /receipts/extract` recibe JPEG, PNG o PDF como cuerpo binario, con los mismos
@@ -240,7 +250,7 @@ base en un directorio temporal.
 | `GET /expenses/export.csv` (mismos filtros) | CSV UTF-8 con BOM |
 | `GET /expenses/stats` | `{count, with_extraction, correction_rate_by_field, qr_verified_rate, suggestion_acceptance}` |
 
-El cuerpo de `POST` y `PUT` es `{receipt, fiscal_qr, category, extracted,
+El cuerpo de `POST` y `PUT` es `{receipt, fiscal_qr, fiscal_qr_signature, category, extracted,
 document_sha256, allow_duplicate, category_suggestion}`. Categorías: `supermercado`, `combustible`,
 `restaurantes`, `servicios`, `transporte`, `salud`, `hogar`, `otros`.
 `extracted` es la salida normalizada original de `/receipts/extract` (o `null` si

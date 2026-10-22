@@ -59,7 +59,7 @@ describe('confirm expense', () => {
     expect(await screen.findByText(/gasto guardado/i)).toBeTruthy();
     const body = JSON.parse(callsTo(fetch, 'POST', '/expenses')[0][1].body);
     expect(body).toEqual({
-      receipt: { ...receipt, issuer: 'Cafe Uno' }, fiscal_qr: null, category: 'restaurantes',
+      receipt: { ...receipt, issuer: 'Cafe Uno' }, fiscal_qr: null, fiscal_qr_signature: null, category: 'restaurantes',
       extracted: receipt, document_sha256: expect.stringMatching(/^[0-9a-f]{64}$/), allow_duplicate: false, category_suggestion: null,
     });
     await waitFor(() => expect(callsTo(fetch, 'GET', '/expenses').length).toBe(2));

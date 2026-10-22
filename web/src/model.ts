@@ -39,6 +39,7 @@ export type Result = {
   field_status?: Partial<Record<FieldName, FieldStatus>>;
   movement?: 'expense' | 'credit' | 'unknown';
   fiscal_qr?: FiscalQr | null;
+  fiscal_qr_signature?: string | null;
   fiscal_qr_status?: 'found' | 'not_found' | 'invalid' | null;
   category_suggestion?: CategorySuggestion | null;
   requires_human_review: boolean;
@@ -120,6 +121,7 @@ export const categoryLabels: Record<Category, string> = {
 export type ExpenseInput = {
   receipt: Receipt;
   fiscal_qr: FiscalQr | null;
+  fiscal_qr_signature?: string | null;
   category: Category;
   extracted: Receipt | null;
   document_sha256: string | null;
