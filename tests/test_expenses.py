@@ -112,7 +112,7 @@ def test_unknown_expense_is_404(client):
 def test_incomplete_expense_is_422_and_nothing_is_stored(client):
     response = client.post(
         "/expenses",
-        json=payload(receipt=raw_receipt(issuer=None, total="1.234", currency=None)),
+        json=payload(receipt=raw_receipt(issuer=None, total=None, currency=None)),
     )
     assert response.status_code == 422
     detail = response.json()["detail"]

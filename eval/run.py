@@ -73,7 +73,13 @@ def run(output: Path, dataset: Path = DATASET, pause_seconds: float = 0.0) -> No
                         except APIStatusError as exc:
                             captured["http_status"] = exc.status_code
                             raise
+                        try:
+                            # Transcripción cruda: permite re-medir reglas nuevas.
+                            output = json.loads(completion.choices[0].message.content)
+                        except (IndexError, TypeError, ValueError):
+                            output = None
                         captured.update(
+                            model_output=output if isinstance(output, dict) else None,
                             model=completion.model,
                             response_id=completion.id,
                             usage=completion.usage.model_dump()

@@ -202,9 +202,27 @@ def test_validate_rechecks_corrections_against_returned_qr():
     with TestClient(app) as client:
         response = client.post(
             "/receipts/validate",
-            json={"receipt": {**TRANSCRIBED, "total": "12.100"}, "fiscal_qr": qr},
+            json={"receipt": {**TRANSCRIBED, "total": "12.000,00"}, "fiscal_qr": qr},
         )
     assert response.status_code == 200
     result = response.json()
     assert result["field_status"]["total"] == "conflict"
     assert result["field_status"]["date"] == "verified"
+
+
+def test_qr_confirms_a_total_interpreted_from_the_document():
+    """ "12.100" con importes en coma decimal se lee 12100 y el QR lo confirma."""
+    qr = parse_fiscal_qr(qr_url()).model_dump(mode="json")
+    with TestClient(app) as client:
+        response = client.post(
+            "/receipts/validate",
+            json={"receipt": {**TRANSCRIBED, "total": "12.100"}, "fiscal_qr": qr},
+        )
+    result = response.json()
+    assert result["receipt"]["total"] == "12100"
+    assert result["field_status"]["total"] == "verified"
+    assert {
+        "code": "amount_interpreted_from_document",
+        "field": "total",
+        "severity": "info",
+    } in result["issues"]

@@ -4,6 +4,7 @@ import pytest
 
 from expense_lens.normalize import (
     cuit_is_valid,
+    decimal_separator,
     normalize_amount,
     normalize_cuit,
     normalize_currency,
@@ -103,3 +104,37 @@ def test_cuit_checksum_uses_official_weights():
 )
 def test_normalizes_cuit(raw, expected):
     assert normalize_cuit(raw) == expected
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("1.000,00", ","),
+        ("234,00", ","),
+        ("0,5", ","),
+        ("1,000.00", "."),
+        ("234.00", "."),
+        ("1.234", None),
+        ("1,234", None),
+        ("121", None),
+        ("12.345.678", None),
+        (None, None),
+    ],
+)
+def test_decimal_separator_only_from_unambiguous_amounts(raw, expected):
+    assert decimal_separator(raw) == expected
+
+
+@pytest.mark.parametrize(
+    "raw,hint,expected",
+    [
+        ("1.234", ",", ("1234", "amount_interpreted_from_document")),
+        ("1,234", ".", ("1234", "amount_interpreted_from_document")),
+        ("1.234", ".", (None, "ambiguous_amount")),
+        ("1,234", ",", (None, "ambiguous_amount")),
+        ("1.234", None, (None, "ambiguous_amount")),
+        ("1.234,56", ".", ("1234.56", None)),
+    ],
+)
+def test_document_separator_resolves_only_the_thousands_reading(raw, hint, expected):
+    assert normalize_amount(raw, decimal_hint=hint) == expected

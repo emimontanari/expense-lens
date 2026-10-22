@@ -127,10 +127,14 @@ def test_factura_a_requires_discriminated_vat(client, receipt):
 
 
 def test_ambiguous_amount_stays_null_with_warning(client, receipt):
-    receipt.update(letter="B", subtotal=None, tax=None, total="1.210")
+    """Sin moneda ni otros importes no hay de dónde deducir el formato."""
+    receipt.update(letter="B", currency=None, subtotal=None, tax=None, total="1.210")
     result = validate(client, receipt)
     assert result["receipt"]["total"] is None
-    assert codes(result) == {("ambiguous_amount", "total")}
+    assert codes(result) == {
+        ("ambiguous_amount", "total"),
+        ("missing_field", "currency"),
+    }
     assert result["field_status"]["total"] == "conflict"
 
 
@@ -172,3 +176,63 @@ def test_subtotal_copied_from_total_without_tax_is_flagged(client, receipt):
 def test_subtotal_equal_to_total_with_zero_tax_is_not_flagged(client, receipt):
     receipt.update(letter="B", subtotal="3.900,00", tax="0,00", total="3.900,00")
     assert validate(client, receipt)["issues"] == []
+
+
+def test_ambiguous_total_uses_the_document_own_decimal_style(client, receipt):
+    """Si el resto del comprobante usa coma decimal, "1.234" son miles."""
+    receipt.update(subtotal="1.000,00", tax="234,00", total="1.234")
+    result = validate(client, receipt)
+    assert result["receipt"]["total"] == "1234"
+    assert result["issues"] == [
+        {
+            "code": "amount_interpreted_from_document",
+            "field": "total",
+            "severity": "info",
+        }
+    ]
+    assert result["field_status"]["total"] == "unverified"
+
+
+def test_mixed_decimal_styles_give_no_evidence(client, receipt):
+    receipt.update(subtotal="1.000,00", tax="234.00", total="1.234")
+    result = validate(client, receipt)
+    assert result["receipt"]["total"] is None
+    assert ("ambiguous_amount", "total") in codes(result)
+
+
+INTERPRETED = ("amount_interpreted_from_document", "total")
+
+
+@pytest.mark.parametrize(
+    "currency,total,expected",
+    [
+        ("PESOS", "1.234", "1234"),
+        ("$", "1.234", "1234"),
+        ("US$", "1,234", "1234"),
+        ("EUR", "1.234", "1234"),
+    ],
+)
+def test_currency_sets_the_default_number_format(
+    client, receipt, currency, total, expected
+):
+    """Pesos y euros usan coma decimal; dólares, punto (decisión del usuario)."""
+    receipt.update(letter="B", currency=currency, subtotal=None, tax=None, total=total)
+    result = validate(client, receipt)
+    assert result["receipt"]["total"] == expected
+    assert INTERPRETED in codes(result)
+    assert result["field_status"]["total"] == "unverified"
+
+
+def test_dollar_format_keeps_dot_thousands_ambiguous(client, receipt):
+    receipt.update(letter="B", currency="USD", subtotal=None, tax=None, total="1.234")
+    result = validate(client, receipt)
+    assert result["receipt"]["total"] is None
+    assert ("ambiguous_amount", "total") in codes(result)
+
+
+def test_document_amounts_override_the_currency_default(client, receipt):
+    """Una factura en dólares impresa en Argentina puede usar coma decimal."""
+    receipt.update(currency="US$", subtotal="1.000,00", tax="234,00", total="1.234")
+    result = validate(client, receipt)
+    assert result["receipt"]["total"] == "1234"
+    assert INTERPRETED in codes(result)

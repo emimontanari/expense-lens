@@ -24,14 +24,41 @@ def _grouped(value: str, thousands: str) -> str | None:
     return value.replace(thousands, "")
 
 
-def normalize_amount(raw: str | None) -> tuple[str | None, str | None]:
-    """Convierte "1.234,56" o "1,234.56" a "1234.56". El signo lo da el tipo."""
-    if raw is None or not raw.strip():
-        return None, None
+def _clean(raw: str) -> str:
+    """Quita moneda, espacios, paréntesis y signo: queda solo el número."""
     value = CURRENCY_TOKENS.sub("", raw).replace(" ", "").strip()
     if value.startswith("(") and value.endswith(")"):
         value = value[1:-1]
-    value = value.removeprefix("-")
+    return value.removeprefix("-")
+
+
+def decimal_separator(raw: str | None) -> str | None:
+    """Separador decimal que un importe revela sin ambigüedad, o None.
+
+    "1.000,00" y "234,00" revelan coma; "1,000.00" y "234.00", punto. "1.234",
+    "121" y "12.345.678" no revelan nada: son la duda, no la evidencia.
+    """
+    if raw is None or not raw.strip():
+        return None
+    value = _clean(raw)
+    if "." in value and "," in value:
+        return "." if value.rfind(".") > value.rfind(",") else ","
+    match = re.fullmatch(r"\d+([.,])\d{1,2}", value)
+    return match[1] if match else None
+
+
+def normalize_amount(
+    raw: str | None, decimal_hint: str | None = None
+) -> tuple[str | None, str | None]:
+    """Convierte "1.234,56" o "1,234.56" a "1234.56". El signo lo da el tipo.
+
+    decimal_hint es el separador decimal que usa el resto del comprobante. Solo
+    resuelve la duda "1.234": si el documento usa el otro separador como
+    decimal, es separador de miles y se informa la interpretación.
+    """
+    if raw is None or not raw.strip():
+        return None, None
+    value = _clean(raw)
     integer, decimals = None, ""
     if re.fullmatch(r"\d+", value):
         integer = value
@@ -46,7 +73,10 @@ def normalize_amount(raw: str | None) -> tuple[str | None, str | None]:
         if re.fullmatch(rf"\d+{re.escape(sep)}\d{{1,2}}", value):
             integer, _, decimals = value.partition(sep)
         elif re.fullmatch(rf"\d{{1,3}}{re.escape(sep)}\d{{3}}", value):
-            # "1.234" puede ser mil doscientos o uno con decimales: no se adivina.
+            # "1.234" puede ser mil doscientos o uno con decimales: no se adivina,
+            # salvo que el propio documento muestre que ese separador no es decimal.
+            if decimal_hint is not None and decimal_hint != sep:
+                return value.replace(sep, ""), "amount_interpreted_from_document"
             return None, "ambiguous_amount"
         else:
             integer = _grouped(value, sep)
